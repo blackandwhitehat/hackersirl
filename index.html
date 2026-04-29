@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hackers IRL</title>
-  <meta name="description" content="Where the digital underground meets real life. Raw and unfiltered tales from the trenches of InfoSec conferences.">
-  <meta property="og:title" content="Hackers IRL Podcast">
-  <meta property="og:description" content="Your backstage pass to the hacker community's biggest and boldest events.">
+  <meta name="description" content="A podcast about the people behind the screens. Voicemails from hackers about whatever's on their mind that day. Call the line and leave a 10-minute operator log.">
+  <meta property="og:title" content="Hackers IRL">
+  <meta property="og:description" content="A podcast about the people behind the screens. Voicemails from hackers about whatever's on their mind that day.">
   <meta property="og:image" content="https://is1-ssl.mzstatic.com/image/thumb/PodcastSource211/v4/1d/89/e8/1d89e8e0-c270-d70a-eccc-6e02ee0440ea/23a0af38-740f-441d-806f-de56ea136a56.png/1200x1200bf-60.jpg">
   <meta property="og:url" content="https://hackersirl.com">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
@@ -107,6 +107,75 @@
       letter-spacing: 2px;
       text-transform: uppercase;
       margin-bottom: 2rem;
+    }
+
+    /* Phone CTA: operator log call line */
+    .phone-cta {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 1.2rem 2rem;
+      margin: 0.5rem 0 1.5rem;
+      border: 1px solid var(--green);
+      background: linear-gradient(180deg, rgba(0,255,136,0.06), rgba(0,255,136,0.02));
+      text-decoration: none;
+      color: var(--text);
+      font-family: var(--mono);
+      transition: all 0.2s;
+    }
+    .phone-cta:hover {
+      box-shadow: 0 0 30px var(--green-glow);
+      transform: translateY(-1px);
+    }
+    .phone-cta .pc-label {
+      font-size: 0.6rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--green);
+    }
+    .phone-cta .pc-number {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 1px;
+    }
+    .phone-cta .pc-sub {
+      font-size: 0.65rem;
+      color: var(--text2);
+      letter-spacing: 1px;
+    }
+
+    /* Manifesto section */
+    .manifesto {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 3rem;
+      border-top: 1px solid var(--border);
+    }
+    .manifesto h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 2rem;
+      letter-spacing: -0.5px;
+    }
+    .manifesto p {
+      color: var(--text2);
+      font-size: 1rem;
+      line-height: 1.8;
+      margin-bottom: 1.4rem;
+    }
+    .manifesto p strong {
+      color: #fff;
+      font-weight: 600;
+    }
+    .manifesto p.dropline {
+      font-family: var(--mono);
+      color: var(--green);
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      margin-top: 2rem;
     }
 
     /* Subscribe buttons */
@@ -259,11 +328,15 @@
          alt="Hackers IRL Podcast"
          loading="eager">
     <h1>HACKERS IRL</h1>
-    <p class="tagline">where the digital underground meets real life</p>
+    <p class="tagline">you're already one of us</p>
     <p class="desc">
-      Your backstage pass to the hacker community's biggest and boldest events and deep-dives into hacker tech. Raw and unfiltered tales from the trenches of InfoSec conferences. DEF CON, Black Hat, BSides, and the late-night escapades that only happen when you mix hackers, caffeine, and a little chaos.
+      A podcast about the people behind the screens. Not thirty-year career arcs compressed into forty minutes of voiceover and synth. Just hackers talking about whatever's on their mind that day. The project that won't compile. The con they just got back from. The thing they hate about their job. The CTF flag that took three days. The dog that needs walking.
     </p>
-    <p class="hosts">Hosted by Razor &amp; Blade</p>
+    <a href="tel:+10000000000" class="phone-cta" id="phone-cta">
+      <span class="pc-label">☎ Call the operator log</span>
+      <span class="pc-number" id="pc-number">+1 (___) ___-____</span>
+      <span class="pc-sub">up to 10 min · anonymous option</span>
+    </a>
     <div class="subscribe">
       <a href="https://podcasts.apple.com/us/podcast/hackers-irl/id1780233906" class="sub-btn primary" target="_blank" rel="noopener">
         &#xf8ff; Apple Podcasts
@@ -275,6 +348,18 @@
         ▶ Episodes
       </a>
     </div>
+  </section>
+
+  <section class="manifesto" id="why">
+    <h2>Why Hackers IRL exists</h2>
+    <p>Most podcasts about hackers are story arcs. A whole career compressed into a single episode. By the time the credits roll you walk away thinking these people are different from you. Built different. Some other species.</p>
+    <p><strong>They're not.</strong></p>
+    <p>The hackers you look up to are walking their dogs. Fighting with their printers. Half-finishing a project they swore they'd ship six months ago. They have bad days, kid stuff, shoulder injuries, partners who don't get what they do for a living. The narrative format hides all that. It collapses a life into a highlight reel and makes it look like a destination instead of a Tuesday.</p>
+    <p>Telling someone's life story is a completely different thing than hearing them talk about their day. We wanted the second one.</p>
+    <p>So this show features voicemails. Brain dumps from people in our world about whatever their actual day looks like. War stories from a con last weekend. The CTF flag that took three days. Cool projects. Boring projects. Things they're proud of. Things they're scared of. The vendor that won't return your emails. Family. Hobbies that have nothing to do with infosec. Roadtrips. Whatever you want.</p>
+    <p>Call the line. Talk for up to ten minutes. Record your handle and say what you do, or hit the option to stay anonymous and the line scrambles your voice. We pick the ones that feel right and put them out as episodes.</p>
+    <p>If you've ever heard a hacker on a stage and thought "I could never do that," listen in, I'm sure plenty of them thought that too and just did it scared.</p>
+    <p class="dropline">Pick up the phone.</p>
   </section>
 
   <div class="apple-embed">

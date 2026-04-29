@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>Hackers IRL — Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0a0a0a; --bg2:#111; --bg3:#1a1a1a;
+    --text:#e0e0e0; --text2:#999; --dim:#555;
+    --green:#00ff88; --green-glow:rgba(0,255,136,0.12);
+    --red:#ff3355; --amber:#f0a020;
+    --border:#222;
+    --mono:'JetBrains Mono',monospace; --sans:'Inter',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;padding:1.5rem;}
+  header{display:flex;justify-content:space-between;align-items:center;padding-bottom:1rem;border-bottom:1px solid var(--border);margin-bottom:1.5rem}
+  h1{font-size:1.4rem;letter-spacing:-0.5px}
+  .crumb{font-family:var(--mono);font-size:0.65rem;letter-spacing:2px;color:var(--dim);text-transform:uppercase}
+  .who{font-family:var(--mono);font-size:0.75rem;color:var(--text2)}
+  main{max-width:920px;margin:0 auto}
+  .filters{display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
+  .filter-btn{font-family:var(--mono);font-size:0.7rem;letter-spacing:1px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:0.4rem 0.9rem;cursor:pointer}
+  .filter-btn.active{border-color:var(--green);color:var(--green)}
+  .empty{padding:4rem 1rem;text-align:center;color:var(--dim);font-family:var(--mono);font-size:0.8rem}
+  .sub{background:var(--bg2);border:1px solid var(--border);padding:1.25rem;margin-bottom:0.85rem;border-radius:4px;transition:border-color 0.2s}
+  .sub:hover{border-color:var(--green-glow)}
+  .sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.75rem}
+  .sub-meta{font-family:var(--mono);font-size:0.65rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+  .pill{display:inline-block;padding:0.15rem 0.55rem;font-family:var(--mono);font-size:0.6rem;letter-spacing:1.5px;text-transform:uppercase;border:1px solid var(--border);margin-right:0.4rem}
+  .pill-anon{border-color:var(--amber);color:var(--amber)}
+  .pill-status{border-color:var(--green);color:var(--green)}
+  .pill-processing{border-color:var(--amber);color:var(--amber)}
+  .pill-recording{border-color:var(--dim);color:var(--dim)}
+  .audio-row{display:flex;flex-direction:column;gap:0.5rem;margin:0.75rem 0}
+  .audio-row label{font-family:var(--mono);font-size:0.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--dim)}
+  audio{width:100%;height:32px}
+  .draft{background:var(--bg3);border:1px solid var(--border);padding:0.85rem;margin-top:0.85rem;border-radius:4px}
+  .draft input,.draft textarea{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--sans);padding:0.55rem 0.7rem;font-size:0.9rem;margin-top:0.3rem;font-family:inherit}
+  .draft label{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--dim);margin-top:0.55rem}
+  .draft textarea{resize:vertical;min-height:80px;font-family:var(--sans);line-height:1.5}
+  .draft input:focus,.draft textarea:focus{outline:none;border-color:var(--green)}
+  .actions{display:flex;gap:0.5rem;margin-top:0.85rem;flex-wrap:wrap}
+  .btn{font-family:var(--mono);font-size:0.7rem;letter-spacing:1px;padding:0.55rem 1.1rem;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:0.4rem;transition:all 0.2s}
+  .btn:hover{border-color:var(--green);color:var(--green)}
+  .btn-publish{border-color:var(--green);color:var(--green)}
+  .btn-publish:hover{background:var(--green);color:var(--bg)}
+  .btn-reject{border-color:var(--red);color:var(--red)}
+  .btn-reject:hover{background:var(--red);color:var(--bg)}
+  .transcript{margin-top:0.85rem;padding:0.85rem;background:var(--bg);border:1px solid var(--border);font-size:0.8rem;line-height:1.6;color:var(--text2);max-height:200px;overflow-y:auto;border-radius:4px}
+  .transcript.empty-tr{color:var(--dim);font-style:italic}
+  details summary{cursor:pointer;font-family:var(--mono);font-size:0.65rem;letter-spacing:1px;color:var(--dim);text-transform:uppercase;padding:0.4rem 0}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="crumb">HACKERS IRL · ADMIN</div>
+    <h1>Operator log queue</h1>
+  </div>
+  <div class="who" id="who"></div>
+</header>
+<main>
+  <div class="filters">
+    <button class="filter-btn active" data-status="ready,processing,recording">Pending</button>
+    <button class="filter-btn" data-status="ready">Ready</button>
+    <button class="filter-btn" data-status="processing">Processing</button>
+    <button class="filter-btn" data-status="published">Published</button>
+    <button class="filter-btn" data-status="rejected">Rejected</button>
+  </div>
+  <div id="list"><div class="empty">Loading…</div></div>
+</main>
+<script>
+  const WHO = document.getElementById('who');
+  // CF Access sets this header server-side; fetch it from a known
+  // authed endpoint to display.
+  fetch('/cdn-cgi/access/get-identity').then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && d.email) WHO.textContent = d.email; })
+    .catch(() => {});
+
+  const LIST = document.getElementById('list');
+  const FILTERS = document.querySelectorAll('.filter-btn');
+  let currentStatus = 'ready,processing,recording';
+
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    const diff = (Date.now() - d.getTime()) / 1000;
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return d.toLocaleDateString();
+  }
+  function fmtDur(s) { if (!s) return '—'; const m = Math.floor(s/60); const r = s%60; return m+':'+String(r).padStart(2,'0'); }
+  function esc(s) { return String(s ?? '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  async function load() {
+    LIST.innerHTML = '<div class="empty">Loading…</div>';
+    try {
+      const r = await fetch('/api/admin/submissions?status=' + encodeURIComponent(currentStatus), { credentials: 'include' });
+      if (!r.ok) {
+        LIST.innerHTML = '<div class="empty">' + (r.status === 403 ? 'Access denied. Make sure your Cloudflare Access session is valid.' : 'Failed to load: ' + r.status) + '</div>';
+        return;
+      }
+      const rows = await r.json();
+      if (!rows.length) { LIST.innerHTML = '<div class="empty">No submissions in this state.</div>'; return; }
+      LIST.innerHTML = rows.map(renderSubmission).join('');
+      LIST.querySelectorAll('.btn-publish').forEach(b => b.addEventListener('click', onPublish));
+      LIST.querySelectorAll('.btn-reject').forEach(b => b.addEventListener('click', onReject));
+    } catch (e) {
+      LIST.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function renderSubmission(s) {
+    const isAnon = !!s.anon;
+    const bodyAudio = isAnon && s.body_audio_anon_url ? s.body_audio_anon_url : s.body_audio_url;
+    const isPublishable = s.status === 'ready';
+    return `
+      <div class="sub" data-id="${esc(s.id)}">
+        <div class="sub-head">
+          <div>
+            <span class="pill pill-status pill-${esc(s.status)}">${esc(s.status)}</span>
+            ${isAnon ? '<span class="pill pill-anon">ANON · ' + esc(s.anon_voice_id || '?') + '</span>' : ''}
+            <div class="sub-meta" style="margin-top:0.3rem">
+              ${fmtDate(s.created_at)} · ${fmtDur(s.duration_seconds)}
+            </div>
+          </div>
+        </div>
+        ${s.handle_audio_url ? `<div class="audio-row"><label>Handle</label><audio controls preload="none" src="${esc(s.handle_audio_url)}"></audio></div>` : ''}
+        ${bodyAudio ? `<div class="audio-row"><label>Body${isAnon && s.body_audio_anon_url ? ' (anonymized)' : ''}</label><audio controls preload="none" src="${esc(bodyAudio)}"></audio></div>` : '<div class="sub-meta">No body audio yet.</div>'}
+        ${isAnon && s.body_audio_url && s.body_audio_anon_url ? `<details><summary>Original audio (anon caller)</summary><audio controls preload="none" src="${esc(s.body_audio_url)}"></audio></details>` : ''}
+        <details>
+          <summary>Transcript</summary>
+          <div class="transcript ${s.transcript ? '' : 'empty-tr'}">${esc(s.transcript || 'No transcript yet.')}</div>
+        </details>
+        ${isPublishable ? `
+        <div class="draft">
+          <label>Episode title</label>
+          <input type="text" class="ep-title" value="${esc(s.suggested_title || '')}" placeholder="Title">
+          <label>Description</label>
+          <textarea class="ep-desc" placeholder="Description">${esc(s.suggested_description || '')}</textarea>
+          <label>Episode number (optional)</label>
+          <input type="number" class="ep-num" placeholder="e.g. 12">
+          <div class="actions">
+            <button class="btn btn-publish">▶ Publish to feed</button>
+            <button class="btn btn-reject">✕ Reject</button>
+          </div>
+        </div>
+        ` : `
+        <div class="actions"><button class="btn btn-reject">✕ Reject</button></div>
+        `}
+      </div>`;
+  }
+
+  async function onPublish(ev) {
+    const card = ev.target.closest('.sub');
+    const id = card.dataset.id;
+    const title = card.querySelector('.ep-title').value.trim();
+    const description = card.querySelector('.ep-desc').value.trim();
+    const epNum = card.querySelector('.ep-num').value.trim();
+    if (!title || !description) { alert('Title and description required.'); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Publishing…';
+    const r = await fetch('/api/admin/publish', {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        submission_id: id, title, description,
+        episode_number: epNum ? parseInt(epNum, 10) : null,
+      }),
+    });
+    if (r.ok) { load(); } else { alert('Publish failed: ' + r.status + ' ' + (await r.text()).slice(0, 200)); ev.target.disabled = false; ev.target.textContent = '▶ Publish to feed'; }
+  }
+  async function onReject(ev) {
+    const card = ev.target.closest('.sub');
+    const id = card.dataset.id;
+    const reason = prompt('Reject reason (optional):', '');
+    if (reason === null) return;
+    ev.target.disabled = true;
+    const r = await fetch('/api/admin/reject', {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ submission_id: id, reason: reason || null }),
+    });
+    if (r.ok) { load(); } else { alert('Reject failed: ' + r.status); ev.target.disabled = false; }
+  }
+  FILTERS.forEach(b => b.addEventListener('click', () => {
+    FILTERS.forEach(f => f.classList.remove('active'));
+    b.classList.add('active');
+    currentStatus = b.dataset.status;
+    load();
+  }));
+  load();
+</script>
+</body>
+</html>
