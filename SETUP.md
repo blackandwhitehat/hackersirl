@@ -18,7 +18,6 @@ are secrets except where noted.
 | `ELEVENLABS_VOICE_OPERATOR` | voice ID for anon "operator" persona |
 | `ELEVENLABS_VOICE_TRUCKER` | voice ID for anon "trucker" persona |
 | `ELEVENLABS_VOICE_ANCHOR` | voice ID for anon "news anchor" persona |
-| `OPENAI_API_KEY` | for Whisper transcription + draft titles/descriptions |
 | `INTERNAL_SECRET` | random 32-char hex; protects `/api/process` |
 | `ADMIN_EMAIL` | the email Cloudflare Access uses to authorize `/admin` |
 | `ADMIN_BEARER` | optional fallback bearer token for local testing |
@@ -60,6 +59,23 @@ hackersirl-audio/
 Easiest way: pick a short reference clip ("hey, this is your operator log,
 just hold on a sec"), run it through ElevenLabs Speech-to-Speech for each
 target voice, save as MP3, upload via the Supabase dashboard.
+
+## Transcription + draft title/desc
+
+CF Pages just rehosts the audio + runs the ElevenLabs anon swap during
+the call. Whisper transcription and the draft title/description happen
+out-of-band on the quantos-bot Mac via a 5-minute cron:
+
+- Script: `~/.claude/cron/hackersirl-process.sh`
+- LaunchAgent: `~/Library/LaunchAgents/com.quantos.hackersirl-process.plist`
+- Whisper: `mlx_whisper` (Apple-silicon, model `whisper-large-v3-turbo`)
+- Drafting: `claude -p` (uses the local Claude Code subscription, no API key needed)
+- Logs: `~/.claude/cron/logs/hackersirl-process.{log,err.log}`
+
+The cron polls `hir_submissions` for `status='ready' AND transcript IS NULL`,
+downloads the audio, runs Whisper, drafts a title + description with Claude,
+and PATCHes the row. Admin queue auto-shows the new fields on next refresh.
+The Mac must be online for processing to happen — backlog will drain when it wakes.
 
 ## Once everything is set
 
