@@ -177,6 +177,46 @@
       letter-spacing: 1px;
       margin-top: 2rem;
     }
+    .manifesto details {
+      margin: 0;
+    }
+    .manifesto details summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      padding: 0.5rem 0;
+    }
+    .manifesto details summary::-webkit-details-marker { display: none; }
+    .manifesto details summary h2 {
+      margin: 0;
+      flex: 1;
+    }
+    .manifesto-toggle {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--green);
+      border: 1px solid var(--green);
+      padding: 0.35rem 0.75rem;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .manifesto details summary:hover .manifesto-toggle {
+      background: var(--green);
+      color: var(--bg);
+    }
+    .manifesto details[open] .manifesto-toggle::after {
+      content: ' ▴';
+    }
+    .manifesto details:not([open]) .manifesto-toggle::after {
+      content: ' ▾';
+    }
+    .manifesto-body {
+      padding-top: 1rem;
+    }
 
     /* Subscribe buttons */
     .subscribe {
@@ -351,15 +391,19 @@
   </section>
 
   <section class="manifesto" id="why">
-    <h2>Why Hackers IRL exists</h2>
-    <p>Most podcasts about hackers are story arcs. A whole career compressed into a single episode. By the time the credits roll you walk away thinking these people are different from you. Built different. Some other species.</p>
-    <p><strong>They're not.</strong></p>
-    <p>The hackers you look up to are walking their dogs. Fighting with their printers. Half-finishing a project they swore they'd ship six months ago. They have bad days, kid stuff, shoulder injuries, partners who don't get what they do for a living. The narrative format hides all that. It collapses a life into a highlight reel and makes it look like a destination instead of a Tuesday.</p>
-    <p>Telling someone's life story is a completely different thing than hearing them talk about their day. We wanted the second one.</p>
-    <p>So this show features voicemails. Brain dumps from people in our world about whatever their actual day looks like. War stories from a con last weekend. The CTF flag that took three days. Cool projects. Boring projects. Things they're proud of. Things they're scared of. The vendor that won't return your emails. Family. Hobbies that have nothing to do with infosec. Roadtrips. Whatever you want.</p>
-    <p>Call the line. Talk for up to ten minutes. Record your handle and say what you do, or hit the option to stay anonymous and the line scrambles your voice. We pick the ones that feel right and put them out as episodes.</p>
-    <p>If you've ever heard a hacker on a stage and thought "I could never do that," listen in, I'm sure plenty of them thought that too and just did it scared. Listen in, learn, do cool stuff, and when you're ready......</p>
-    <p class="dropline">Pick up the phone.</p>
+    <details>
+      <summary><h2>Why I made this</h2><span class="manifesto-toggle">read more</span></summary>
+      <div class="manifesto-body">
+        <p>Most hacker podcasts are story arcs. A whole career compressed into one episode. By the time the credits roll you walk away thinking we're different from you. Built different. Some other species.</p>
+        <p><strong>We're not.</strong></p>
+        <p>We walk our dogs. Fight with our printers. Half-finish projects we swore we'd ship six months ago. We have bad days, kid stuff, shoulder injuries, partners who don't get what we do for a living. The narrative format hides all that. It collapses a life into a highlight reel and makes it look like a destination instead of a Tuesday.</p>
+        <p>Telling someone's life story is a completely different thing than hearing them talk about their day. I wanted the second one.</p>
+        <p>So this show is voicemails. Brain dumps from people in our world about whatever's on our minds. War stories from a con last weekend. The CTF flag that took three days. Cool projects. Boring projects. Things we're proud of. Things we're scared of. The vendor that won't return our emails. Family. Hobbies that have nothing to do with infosec. Roadtrips. Whatever you want.</p>
+        <p>Call the line. Talk for up to ten minutes. Record your handle and say what you do, or hit the option to stay anonymous and the line scrambles your voice. I pick the ones that feel right and put them out as episodes.</p>
+        <p>If you've ever heard one of us on a stage and thought "I could never do that," listen in, I'm sure plenty of us thought that too and just did it scared. Listen in, learn, do cool stuff, and when you're ready......</p>
+        <p class="dropline">Pick up the phone.</p>
+      </div>
+    </details>
   </section>
 
   <div class="apple-embed">
