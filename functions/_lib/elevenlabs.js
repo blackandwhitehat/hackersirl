@@ -2,19 +2,18 @@
 // target voice ID, returns the same speech rendered in that voice.
 // Quality is high enough that callers can use this for actual anon.
 //
-// Voice catalog: the on-call menu offers three persona slots; the
-// actual ElevenLabs voice ID for each slot is set via env so we can
-// swap voices without redeploying. Defaults are placeholders that
-// must be filled in by the deploy step (see scripts/seed-voices.js).
+// Voice catalog: three persona slots offered to anon callers. The
+// labels are user-facing and used in the IVR menu prompts; the actual
+// ElevenLabs voice IDs come from runtime env (Pages Functions pass
+// env into each handler — there is no `process` global on Workers).
 
-export const ELEVENLABS_VOICES = {
-  operator: { label: 'the operator',   elevenlabsVoiceId: process.env?.ELEVENLABS_VOICE_OPERATOR || null },
-  trucker:  { label: 'the trucker',    elevenlabsVoiceId: process.env?.ELEVENLABS_VOICE_TRUCKER  || null },
-  anchor:   { label: 'the news anchor', elevenlabsVoiceId: process.env?.ELEVENLABS_VOICE_ANCHOR || null },
+export const VOICE_LABELS = {
+  operator: 'the operator',
+  trucker:  'the trucker',
+  anchor:   'the news anchor',
 };
 
-// Resolve voice IDs against the runtime env (Pages Functions pass env
-// in via the request handler arg, not via process.env).
+// Resolve a slot key to the configured ElevenLabs voice ID.
 export function resolveVoice(env, voiceKey) {
   const map = {
     operator: env.ELEVENLABS_VOICE_OPERATOR,

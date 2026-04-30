@@ -8,7 +8,7 @@
 
 import { twimlResponse, twilioForm, verifyTwilioSignature } from '../../_lib/twiml.js';
 import { sbSelect, sbUpdate, sbStorageUpload } from '../../_lib/supabase.js';
-import { ELEVENLABS_VOICES, swapVoice } from '../../_lib/elevenlabs.js';
+import { resolveVoice, swapVoice } from '../../_lib/elevenlabs.js';
 
 export async function onRequestPost({ request, env, waitUntil }) {
   const params = await twilioForm(request);
@@ -46,8 +46,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
 
 async function processAnon(env, submissionId, twilioMp3Url, voiceId) {
   try {
-    const cfg = ELEVENLABS_VOICES[voiceId] || ELEVENLABS_VOICES.operator;
-    const elVoiceId = cfg.elevenlabsVoiceId;
+    const elVoiceId = resolveVoice(env, voiceId || 'operator');
     if (!elVoiceId) return;
 
     // Pull the Twilio recording (basic auth required; Twilio's
