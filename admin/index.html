@@ -62,6 +62,10 @@
     <h1>Operator log queue</h1>
   </div>
   <div class="who" id="who"></div>
+  <div style="margin-left:1rem;display:flex;gap:0.5rem">
+    <button class="btn" style="padding:0.3rem 0.6rem;font-size:0.85rem" onclick="pasteBearer()">🔑 paste bearer</button>
+    <button class="btn" style="padding:0.3rem 0.6rem;font-size:0.85rem" onclick="logout()">🚪 logout</button>
+  </div>
 </header>
 <main>
   <details style="border:1px solid #00ff88;border-radius:6px;padding:0.6rem 0.9rem;margin-bottom:1rem">
@@ -80,16 +84,41 @@
 </main>
 <script>
   const WHO = document.getElementById('who');
-  // Auth: prefer Cloudflare Access (sets identity server-side); fall
-  // back to a bearer token stored in localStorage for testing while
-  // CF Access isn't configured. URL ?token=… loads a token once.
-  const urlToken = new URLSearchParams(location.search).get('token');
-  if (urlToken) {
-    localStorage.setItem('hir_admin_bearer', urlToken);
+  // Auth: Cloudflare Access (preferred — sets identity server-side
+  // via Cf-Access-Authenticated-User-Email header) OR an emergency
+  // bearer pasted into the local storage prompt below.
+  //
+  // The previous /admin/?token=XYZ URL pattern was REMOVED — token
+  // in the URL leaks via browser history, CF Access redirect chains
+  // (which echo the full ?token in the redirect_url param), Referer
+  // on outbound links, and any in-path proxy access logs. If you
+  // need bearer auth, paste it via the prompt button below; never
+  // via URL.
+  let BEARER = localStorage.getItem('hir_admin_bearer') || '';
+  // Strip any legacy ?token= from the URL without storing it.
+  if (new URLSearchParams(location.search).get('token')) {
     history.replaceState(null, '', location.pathname);
+    alert('URL-token login is disabled. Use the "Paste bearer" button below or sign in via Cloudflare Access.');
   }
-  const BEARER = localStorage.getItem('hir_admin_bearer') || '';
   const authHeaders = () => BEARER ? { authorization: `Bearer ${BEARER}` } : {};
+  function setBearer(t) {
+    BEARER = (t || '').trim();
+    if (BEARER) localStorage.setItem('hir_admin_bearer', BEARER);
+    else localStorage.removeItem('hir_admin_bearer');
+  }
+  function pasteBearer() {
+    const t = prompt('Paste admin bearer token (one-time, stored in localStorage):');
+    if (t == null) return;
+    setBearer(t);
+    location.reload();
+  }
+  function logout() {
+    setBearer('');
+    // Also nuke CF Access session if present.
+    location.href = '/cdn-cgi/access/logout?redirect_url=/admin/';
+  }
+  window.pasteBearer = pasteBearer;
+  window.logout = logout;
 
   fetch('/cdn-cgi/access/get-identity').then(r => r.ok ? r.json() : null)
     .then(d => { if (d && d.email) WHO.textContent = d.email; else if (BEARER) WHO.textContent = 'bearer-auth'; })
