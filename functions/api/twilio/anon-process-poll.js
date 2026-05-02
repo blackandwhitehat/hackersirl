@@ -5,6 +5,7 @@
 
 import { twimlResponse, twilioForm, verifyTwilioSignature } from '../../_lib/twiml.js';
 import { sbSelect } from '../../_lib/supabase.js';
+import { holdMusicUrl } from '../../_lib/hold-music.js';
 
 const MAX_WAIT_LOOPS = 15;     // each loop is ~6s of hold music
 const HOLD_MUSIC_LOOP_SEC = 6;
@@ -36,8 +37,8 @@ export async function onRequestPost({ request, env }) {
     return twimlResponse(xml);
   }
 
-  // Keep waiting.
-  let xml = `<Play>${env.HOLD_MUSIC_URL || `${env.SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/hold-music.mp3`}</Play>`;
+  // Keep waiting — pick a fresh random track each loop.
+  let xml = `<Play>${holdMusicUrl(env)}</Play>`;
   xml += `<Redirect method="POST">/api/twilio/anon-process-poll?tries=${tries + 1}</Redirect>`;
   return twimlResponse(xml);
 }

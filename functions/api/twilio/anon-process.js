@@ -9,6 +9,7 @@
 import { twimlResponse, twilioForm, verifyTwilioSignature } from '../../_lib/twiml.js';
 import { sbSelect, sbUpdate, sbStorageUpload } from '../../_lib/supabase.js';
 import { resolveVoice, transcribe, ttsText } from '../../_lib/elevenlabs.js';
+import { holdMusicUrl } from '../../_lib/hold-music.js';
 
 export async function onRequestPost({ request, env, waitUntil }) {
   const params = await twilioForm(request);
@@ -41,7 +42,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
   // becomes unreachable. Bug repro: caller stuck on hold music forever
   // even though the swap completed in the background.
   let xml = '<Say voice="Polly.Joanna">Working on the scrambled version. Please hold.</Say>';
-  xml += `<Play>${env.HOLD_MUSIC_URL || `${env.SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/hold-music.mp3`}</Play>`;
+  xml += `<Play>${holdMusicUrl(env)}</Play>`;
   xml += `<Redirect method="POST">/api/twilio/anon-process-poll</Redirect>`;
   return twimlResponse(xml);
 }
