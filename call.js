@@ -93,21 +93,37 @@
   // Play a named prompt; resolves when playback ends. iOS Safari needs
   // the AudioContext unlocked first, which ensureCtx() does on every
   // tone/keypress so this is fine after the first DIAL click.
+  //
+  // If a previous prompt is still playing, we need to (a) pause it AND
+  // (b) resolve its pending Promise — otherwise an awaiter sits forever.
+  // We track each speak()'s resolver on the audio element itself so the
+  // interrupting call can fire it before swapping.
   const speak = (name) => new Promise((resolve) => {
     if (currentPromptAudio) {
       try { currentPromptAudio.pause(); } catch(e) {}
+      const prevResolve = currentPromptAudio._hirResolve;
+      currentPromptAudio._hirResolve = null;
+      if (prevResolve) prevResolve();
     }
     const cached = PROMPT_CACHE[name];
     const a = cached ? cached : new Audio(`${IVR_BASE}/${name}.mp3`);
     if (cached) a.currentTime = 0;
+    a._hirResolve = resolve;
     currentPromptAudio = a;
-    a.onended = () => { currentPromptAudio = null; resolve(); };
+    a.onended = () => {
+      if (currentPromptAudio === a) currentPromptAudio = null;
+      a._hirResolve = null;
+      resolve();
+    };
     a.onerror = (e) => {
       console.warn('[hir/call] prompt failed:', name, e?.message || e);
-      currentPromptAudio = null; resolve();
+      if (currentPromptAudio === a) currentPromptAudio = null;
+      a._hirResolve = null;
+      resolve();
     };
     a.play().catch(err => {
       console.warn('[hir/call] play() rejected:', name, err?.message || err);
+      a._hirResolve = null;
       resolve();
     });
   });
@@ -284,7 +300,11 @@
 
   // ── Keypress + dial wiring ─────────────────────────────────────────
   const onKey = async (k) => {
-    if (DTMF[k]) tone(DTMF[k]);
+    // Suppress DTMF audio while the mic is open — the speaker→mic path
+    // would otherwise capture each keypress tone and bake it into the
+    // recording. Visual flash still fires so the user sees the press.
+    const recording = state === STATE.HANDLE_RECORDING || state === STATE.BODY_RECORDING;
+    if (DTMF[k] && !recording) tone(DTMF[k]);
     flashKey(k);
 
     if (state === STATE.MENU) {
@@ -415,9 +435,13 @@
     setKeypadEnabled(false);
     setStatus([['ok', anon ? `anon armed · voice: ${anonVoiceId}` : 'standard mode'], ['prompt', 'next: 5-second handle recording']]);
     await speak('handle-prompt');
-    await sleep(200);
+    await sleep(300);
     tone([1000], 400, 0.18);
-    await sleep(450);   // let the tone finish + tiny gap before mic opens
+    // Wait the full beep duration + headroom for the AudioContext output
+    // bus + speaker→mic crosstalk to decay before opening the recorder.
+    // Anything <500ms post-beep tends to leak the tone tail into the
+    // recording, which then sounds like "audio overran the prompt".
+    await sleep(750);
 
     state = STATE.HANDLE_RECORDING;
     resetTimer();
@@ -445,21 +469,24 @@
     setKeypadEnabled(false);
     setStatus([['ok', 'handle: captured'], ['prompt', 'next: up to 10 minutes of message']]);
     await speak('body-prompt');
-    await sleep(200);
+    await sleep(300);
     tone([1000], 400, 0.18);
-    await sleep(450);
+    await sleep(750);  // same beep-tail decay as handle (see comment above)
     state = STATE.BODY_RECORDING;
     setStatus([['err', '● RECORDING MESSAGE'], ['meta', 'press # to stop · max 10:00']]);
     resetTimer();
     startTimer(true);
     setKeypadEnabled(true);
-    // Override key handler so # ends body
+    // Override key handler so # ends body. We intentionally DON'T play
+    // the # DTMF tone here — recording is still active and the tone
+    // would leak into the recording's tail. Confirmation tone fires
+    // after stopRecording() returns.
     try {
       await startRecording(600 * 1000);
       await new Promise((resolve) => {
         const handler = async (k) => {
           if (k !== '#') { errorBeep(); return; }
-          flashKey('#'); tone(DTMF['#']);
+          flashKey('#');
           $keypad.removeEventListener('click', tempClick);
           document.removeEventListener('keydown', tempKey);
           resolve();
@@ -473,6 +500,9 @@
       });
       bodyBlob = await stopRecording();
       stopTimer();
+      // Now safe to play DTMF + confirmation tone — mic is closed.
+      tone(DTMF['#'], 110, 0.18);
+      await sleep(140);
       tone([1000], 200, 0.18);
       await goReview();
     } catch (e) {
