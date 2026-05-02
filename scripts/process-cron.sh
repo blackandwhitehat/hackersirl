@@ -132,7 +132,7 @@ Listen to this submission and produce a JSON object. Reply with ONLY the JSON, n
 {
   "title":         "under 70 chars, captures the heart of the story",
   "description":   "one short paragraph under 240 chars, what this episode is about",
-  "intro_line":    "the show host introducing this caller right after the intro music. Format roughly: 'Up next: <handle>, <how they described themselves in the transcript>. Here's their story.' If the caller didn't describe themselves, just 'Up next: <handle>. Here's their story.' If no handle either, 'Up next, an anonymous caller. Here's their story.' One natural sentence, max ~30 words. The host says this — write it for the host's voice.",
+  "intro_line":    "the show host introducing this caller right after the intro music. Be specific and contextual based on what's in the transcript. Examples:\n  - With handle + self-description: 'Up next: Sparky, a SOC analyst at a mid-size bank. Here's their story.'\n  - With handle, no self-description: 'Up next: Sparky, calling in on the way to a celebration of life. Here's their story.' (use whatever they're DOING or the topic of their call as the descriptor)\n  - No handle but transcript has context: 'Up next, a caller running the network village at a hacker con. Here's their story.'\n  - No handle and transcript is too thin to describe: 'Up next, an unnamed caller. Here's their story.'\n  Never say 'anonymous' — say 'unnamed' if you must. One natural sentence, max ~30 words. The host says this — write it for the host's voice.",
   "shoutouts":     ["names or handles of people the caller mentioned, credited, or thanked"],
   "urls":          ["any URL the caller mentioned (full URL with scheme if given)"],
   "emails":        ["any email address the caller mentioned"]
@@ -190,14 +190,17 @@ EOF
 
   # PATCH the row with all the derived fields. Don't touch
   # body_audio_anon_url here — the CF function's S2S swap is canonical.
+  # Clear preview_input_hash so the next publish-cron tick treats this
+  # submission's preview as stale (the URL stays the same on TTS regen,
+  # so the URL-based hash won't catch a content change otherwise).
   PAYLOAD=$(jq -nc \
     --rawfile t "$TXT" \
     --arg ti "$TITLE" \
     --arg de "$DESC" \
     --arg hi "$HANDLE_INTRO_URL" \
     --argjson sn "$NOTES_JSON" \
-    'if $hi == "" then {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn}
-     else {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, handle_intro_url:$hi}
+    'if $hi == "" then {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, preview_input_hash:null}
+     else {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, handle_intro_url:$hi, preview_input_hash:null}
      end')
 
   HTTP=$(curl -s -o /tmp/hir-patch-resp -w "%{http_code}" -X PATCH \
@@ -207,6 +210,15 @@ EOF
     -d "$PAYLOAD")
   if [ "$HTTP" = "204" ]; then
     echo "  $ID: ok"
+    # If a handle_intro changed and there's a published episode for this
+    # submission, clear its input_hash so the publish cron re-renders
+    # the live MP3 with the updated host intro.
+    if [ -n "$HANDLE_INTRO_URL" ]; then
+      curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_episodes?submission_id=eq.${ID}" \
+        -H "apikey: ${SUPABASE_KEY}" -H "authorization: Bearer ${SUPABASE_KEY}" \
+        -H "content-type: application/json" -H "prefer: return=minimal" \
+        -d '{"input_hash":null}' > /dev/null
+    fi
     processed=$((processed + 1))
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -x "$TGSH" ]; then
       "$TGSH" "📞 hackersirl draft ready: $TITLE${HANDLE:+ (@$HANDLE)}" || true

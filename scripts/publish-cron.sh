@@ -224,13 +224,26 @@ render_episode() {
   local handle_mp3=""
   if [ -n "$handle_url" ] && [ "$handle_url" != "null" ]; then
     handle_mp3="$WORKDIR/${id}-handle.mp3"
-    if curl -sLfo "$WORKDIR/${id}-handle.in" "$handle_url" \
-       && ffmpeg -y -i "$WORKDIR/${id}-handle.in" -vn -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k \
-            "$handle_mp3" > "$WORKDIR/$id.handle.log" 2>&1; then
-      :
-    else
+    echo "    handle: download $handle_url"
+    if ! curl -sLfo "$WORKDIR/${id}-handle.in" "$handle_url"; then
+      echo "    handle: download failed"
       handle_mp3=""
+    elif [ ! -s "$WORKDIR/${id}-handle.in" ]; then
+      echo "    handle: download empty"
+      handle_mp3=""
+    elif ! ffmpeg -y -i "$WORKDIR/${id}-handle.in" -vn -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k \
+            "$handle_mp3" > "$WORKDIR/$id.handle.log" 2>&1; then
+      echo "    handle: ffmpeg failed"
+      tail -5 "$WORKDIR/$id.handle.log"
+      handle_mp3=""
+    elif [ ! -s "$handle_mp3" ]; then
+      echo "    handle: encoded file empty"
+      handle_mp3=""
+    else
+      echo "    handle: ready ($(stat -f%z "$handle_mp3") bytes)"
     fi
+  else
+    echo "    handle: no URL provided"
   fi
 
   # Step 4: final concat — [phone] [intro_mixed] [handle?] [body] [outro_mixed]
