@@ -51,7 +51,7 @@ COUNT=$(echo "$ROWS" | jq 'length' 2>/dev/null || echo 0)
 
 # Also pull submissions that don't have a preview rendered yet so admin
 # can hear the final mix before clicking Publish.
-PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
+PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
 PCOUNT=$(echo "$PREVIEWS" | jq 'length' 2>/dev/null || echo 0)
 
@@ -88,7 +88,8 @@ curl -sLfo "$OUTRO_LOCAL"     "$OUTRO_URL"
 #   → body (no bg) → bg_outro+outro_voice mixed
 # Loudness normalized to -16 LUFS (Apple/Spotify spec). MP3 with ID3v2.
 #
-# Anon flow drops the handle (handle isn't S2S-swapped, would unmask).
+# With the handle "presenter" pass enabled, the AI presenter voice
+# re-speaks the caller's handle so anon submissions can keep one too.
 # bg_intro/bg_outro/phone_tones gracefully degrade if unset.
 render_episode() {
   local id="$1" handle_url="$2" body_url="$3" anon="$4" out="$5"
@@ -124,9 +125,13 @@ render_episode() {
     outro_mixed="$OUTRO_LOCAL"
   fi
 
-  # Step 3: optional handle (skipped for anon)
+  # Step 3: handle. Prefer the AI-presenter version (handle_presented_url
+  # — caller's handle re-spoken by the show's presenter voice). For anon
+  # submissions we ONLY use the presented URL; raw handle audio would
+  # leak the caller's voice. For non-anon, fall back to the raw handle
+  # if the presented version isn't available yet.
   local handle_mp3=""
-  if [ "$anon" != "true" ] && [ -n "$handle_url" ] && [ "$handle_url" != "null" ]; then
+  if [ -n "$handle_url" ] && [ "$handle_url" != "null" ]; then
     handle_mp3="$WORKDIR/${id}-handle.mp3"
     if curl -sLfo "$WORKDIR/${id}-handle.in" "$handle_url" \
        && ffmpeg -y -i "$WORKDIR/${id}-handle.in" -vn -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k \
@@ -191,11 +196,15 @@ echo "$ROWS" | jq -c '.[]' | while read -r row; do
   fi
 
   # Pull submission to get handle URL + anon flag (source_audio_url
-  # already accounts for anon/non-anon body choice).
-  SUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${SUB_ID}&select=handle_audio_url,anon" \
+  # already accounts for anon/non-anon body choice). Prefer the
+  # AI-presenter handle; for anon never fall back to raw.
+  SUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${SUB_ID}&select=handle_audio_url,handle_presented_url,anon" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -c '.[0] // {}')
-  HANDLE_URL=$(echo "$SUB" | jq -r '.handle_audio_url // empty')
+  HANDLE_PRESENTED=$(echo "$SUB" | jq -r '.handle_presented_url // empty')
+  HANDLE_RAW=$(echo "$SUB" | jq -r '.handle_audio_url // empty')
   ANON=$(echo "$SUB" | jq -r '.anon // false')
+  HANDLE_URL="$HANDLE_PRESENTED"
+  [ -z "$HANDLE_URL" ] && [ "$ANON" != "true" ] && HANDLE_URL="$HANDLE_RAW"
 
   echo "  $ID: \"$TITLE\""
   FINAL="$WORKDIR/${ID}-final.mp3"
@@ -250,14 +259,20 @@ done
 # published episode will sound like before clicking Publish) ──
 echo "$PREVIEWS" | jq -c '.[]' | while read -r prow; do
   PID=$(echo "$prow" | jq -r .id)
-  PHANDLE=$(echo "$prow" | jq -r '.handle_audio_url // empty')
+  PHANDLE_PRESENTED=$(echo "$prow" | jq -r '.handle_presented_url // empty')
+  PHANDLE_RAW=$(echo "$prow" | jq -r '.handle_audio_url // empty')
   PBODY_RAW=$(echo "$prow" | jq -r '.body_audio_url // empty')
   PBODY_ANON=$(echo "$prow" | jq -r '.body_audio_anon_url // empty')
   PANON=$(echo "$prow" | jq -r '.anon // false')
   PHANDLE_TXT=$(echo "$prow" | jq -r '.handle // ""')
 
-  # Anon path uses the swapped body if rendered; otherwise fall back to
-  # the raw body so we still have something for admin to preview.
+  # Handle: prefer AI presenter version. For anon, never fall back to
+  # raw — that would leak the caller's voice. For non-anon, raw is OK
+  # if presenter pass hasn't run yet.
+  PHANDLE="$PHANDLE_PRESENTED"
+  [ -z "$PHANDLE" ] && [ "$PANON" != "true" ] && PHANDLE="$PHANDLE_RAW"
+
+  # Body: anon uses swapped if available; non-anon uses raw.
   PSRC="$PBODY_RAW"
   [ "$PANON" = "true" ] && [ -n "$PBODY_ANON" ] && PSRC="$PBODY_ANON"
   [ -z "$PSRC" ] && continue

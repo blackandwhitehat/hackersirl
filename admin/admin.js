@@ -57,32 +57,56 @@ const ASSET_LABELS = {
   phone_tones: { label: 'Phone-tones intro',   tts: false, upload: true,  hint: 'Plays before the show intro. 10-15s.' },
 };
 
+let _voiceCache = null;
+async function getVoices() {
+  if (_voiceCache) return _voiceCache;
+  try {
+    const r = await fetch('/api/admin/voices', { credentials: 'include' });
+    if (!r.ok) return [];
+    const { voices } = await r.json();
+    _voiceCache = voices || [];
+    return _voiceCache;
+  } catch { return []; }
+}
+
 async function loadShowAssets() {
   const panel = document.getElementById('show-assets-panel');
   try {
-    const r = await fetch('/api/admin/show-assets', { credentials: 'include', headers: authHeaders() });
-    if (!r.ok) throw new Error('http ' + r.status);
-    const { assets } = await r.json();
+    const [r, voices] = await Promise.all([
+      fetch('/api/admin/show-assets', { credentials: 'include', headers: authHeaders() }).then(x => x.ok ? x.json() : Promise.reject(new Error('http ' + x.status))),
+      getVoices(),
+    ]);
+    const { assets } = r;
     panel.innerHTML = Object.entries(ASSET_LABELS).map(([type, cfg]) => {
       const a = assets[type];
+      const voiceOpts = voices.map(v => {
+        const sel = a && a.voice_id === v.id ? ' selected' : '';
+        return `<option value="${esc(v.id)}"${sel}>${esc(v.label)}</option>`;
+      }).join('');
       return `
         <div class="asset-card" data-type="${type}" style="border:1px dashed #2a2;border-radius:6px;padding:0.6rem;margin-bottom:0.6rem">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <strong style="color:#00ff88">${cfg.label}</strong>
             <span style="color:#999;font-size:0.85rem">${cfg.hint}</span>
           </div>
-          ${a ? `
-            <audio controls preload="none" src="${audioSrc(a.audio_url)}" style="width:100%;margin-top:0.4rem"></audio>
-            ${a.text_source ? `<details style="margin-top:0.3rem"><summary style="cursor:pointer;color:#888;font-size:0.85rem">current text source</summary><div style="white-space:pre-wrap;color:#ccc;font-size:0.85rem;margin-top:0.3rem">${esc(a.text_source)}</div></details>` : ''}
-          ` : '<div style="color:#888;font-size:0.85rem;margin-top:0.4rem">(none configured — using default if any)</div>'}
-          <div style="margin-top:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap">
-            ${cfg.tts ? `<button class="btn btn-tts" data-type="${type}">Replace via text (TTS)</button>` : ''}
-            ${cfg.upload ? `<button class="btn btn-upload" data-type="${type}">Upload MP3</button>` : ''}
-          </div>
+          ${a ? `<audio controls preload="none" src="${audioSrc(a.audio_url)}" style="width:100%;margin-top:0.4rem"></audio>` :
+                 '<div style="color:#888;font-size:0.85rem;margin-top:0.4rem">(none configured)</div>'}
+          ${cfg.tts ? `
+            <div class="tts-form" style="margin-top:0.6rem;display:flex;flex-direction:column;gap:0.4rem">
+              <textarea class="tts-text" rows="3" placeholder="Text the presenter will say..."
+                style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:inherit;padding:0.5rem;font-size:0.85rem;resize:vertical">${esc(a?.text_source || '')}</textarea>
+              <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+                <label style="font-family:var(--mono);font-size:0.65rem;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Voice</label>
+                <select class="tts-voice" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:0.35rem 0.5rem;font-family:inherit;font-size:0.85rem">${voiceOpts}</select>
+                <button class="btn btn-tts-save" data-type="${type}">Save & render</button>
+              </div>
+            </div>
+          ` : ''}
+          ${cfg.upload ? `<div style="margin-top:0.5rem"><button class="btn btn-upload" data-type="${type}">${cfg.tts ? 'Or upload MP3' : 'Upload MP3'}</button></div>` : ''}
         </div>
       `;
     }).join('');
-    panel.querySelectorAll('.btn-tts').forEach(b => b.addEventListener('click', onTtsAsset));
+    panel.querySelectorAll('.btn-tts-save').forEach(b => b.addEventListener('click', onTtsAsset));
     panel.querySelectorAll('.btn-upload').forEach(b => b.addEventListener('click', onUploadAsset));
   } catch (e) {
     panel.innerHTML = `<div style="color:#ff3355">Failed to load: ${esc(e.message)}</div>`;
@@ -90,16 +114,18 @@ async function loadShowAssets() {
 }
 
 async function onTtsAsset(ev) {
+  const card = ev.target.closest('.asset-card');
   const type = ev.target.dataset.type;
-  const text = prompt(`New ${type} text — typing this will render via ElevenLabs and replace the current asset.`);
-  if (!text || text.trim().length < 5) return;
+  const text = card.querySelector('.tts-text').value.trim();
+  const voiceId = card.querySelector('.tts-voice').value;
+  if (text.length < 5) { alert('Need at least 5 characters of text.'); return; }
   ev.target.disabled = true; ev.target.textContent = 'Rendering...';
   const r = await fetch('/api/admin/show-assets', {
     method: 'POST', credentials: 'include',
     headers: { 'content-type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ asset_type: type, mode: 'tts', text: text.trim() }),
+    body: JSON.stringify({ asset_type: type, mode: 'tts', text, voice_id: voiceId || undefined }),
   });
-  if (r.ok) { loadShowAssets(); } else { alert('Render failed: ' + r.status + '\n' + (await r.text()).slice(0, 200)); ev.target.disabled = false; ev.target.textContent = 'Replace via text (TTS)'; }
+  if (r.ok) { loadShowAssets(); } else { alert('Render failed: ' + r.status + '\n' + (await r.text()).slice(0, 200)); ev.target.disabled = false; ev.target.textContent = 'Save & render'; }
 }
 
 function onUploadAsset(ev) {
@@ -168,6 +194,7 @@ async function load() {
     LIST.querySelectorAll('.btn-publish').forEach(b => b.addEventListener('click', onPublish));
     LIST.querySelectorAll('.btn-reject').forEach(b => b.addEventListener('click', onReject));
     LIST.querySelectorAll('.btn-update').forEach(b => b.addEventListener('click', onUpdate));
+    LIST.querySelectorAll('.btn-unpublish').forEach(b => b.addEventListener('click', onUnpublish));
   } catch (e) {
     LIST.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
@@ -231,7 +258,8 @@ function renderSubmission(s) {
         <input type="number" class="ep-num" value="${esc(ep.episode_number ?? '')}">
         <div class="actions">
           <button class="btn btn-update">Save changes</button>
-          <button class="btn btn-reject">Unpublish / reject</button>
+          <button class="btn btn-unpublish">Unpublish (back to queue)</button>
+          <button class="btn btn-reject">Reject (remove)</button>
         </div>
       </div>` : ''}
       ${(!isPublishable && !isPublished && !isPublishing) ? `<div class="actions"><button class="btn btn-reject">Reject</button></div>` : ''}
@@ -290,6 +318,20 @@ async function onReject(ev) {
     body: JSON.stringify({ submission_id: id, reason: reason || null }),
   });
   if (r.ok) { load(); } else { alert('Reject failed: ' + r.status); ev.target.disabled = false; }
+}
+
+async function onUnpublish(ev) {
+  const card = ev.target.closest('.sub');
+  const episode_id = card.dataset.episodeId;
+  if (!episode_id) { alert('No episode id on this card.'); return; }
+  if (!confirm('Take this episode off the live RSS feed and back to the ready queue?')) return;
+  ev.target.disabled = true; ev.target.textContent = 'Unpublishing...';
+  const r = await fetch('/api/admin/unpublish', {
+    method: 'POST', credentials: 'include',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ episode_id }),
+  });
+  if (r.ok) { load(); } else { alert('Unpublish failed: ' + r.status + '\n' + (await r.text()).slice(0, 200)); ev.target.disabled = false; ev.target.textContent = 'Unpublish (back to queue)'; }
 }
 
 FILTERS.forEach(b => b.addEventListener('click', () => {
