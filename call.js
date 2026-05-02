@@ -48,18 +48,31 @@
     if (navigator.vibrate) navigator.vibrate(8);
   };
 
-  const dialTone = () => {
-    // 350+440Hz, sustained ~1.2s
-    tone([350, 440], 1200, 0.10);
-  };
-  const ringTone = () => {
-    // 440+480Hz, 2s on / 4s off pattern. We just play a 2s pulse twice.
-    tone([440, 480], 1900, 0.12);
-    setTimeout(() => tone([440, 480], 1900, 0.12), 4000);
+  const dialTone = (ms = 1800) => tone([350, 440], ms, 0.10);
+  // 440+480Hz · 2s on · 4s off — repeat 3 cycles (~14s total)
+  const ringSequence = async (cycles = 3) => {
+    for (let i = 0; i < cycles; i++) {
+      tone([440, 480], 1900, 0.12);
+      await sleep(2000);
+      await sleep(4000);
+    }
   };
   const pickupClick = () => tone([700], 60, 0.08);
   const hangupClick = () => tone([400, 250], 90, 0.10);
-  const errorBeep = () => { tone([480, 620], 250, 0.16); };
+  const errorBeep = () => tone([480, 620], 250, 0.16);
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // Dial the HackersIRL number digit by digit, real DTMF tones, like
+  // pressing the keys yourself.
+  const PHONE_DIGITS = '9049154225';
+  const dialNumber = async () => {
+    for (const d of PHONE_DIGITS) {
+      tone(DTMF[d], 110, 0.18);
+      flashKey(d);
+      await sleep(150);
+    }
+  };
 
   // ── Pre-rendered IVR prompts (ElevenLabs Brian, served from Storage) ──
   // Each prompt is a static MP3 in the public hackersirl-audio bucket.
@@ -100,6 +113,7 @@
     IDLE: 'idle',
     CONNECTING: 'connecting',
     MENU: 'menu',
+    ANON_PICK_VOICE: 'anon_pick_voice',
     HANDLE_PROMPT: 'handle_prompt',
     HANDLE_RECORDING: 'handle_recording',
     BODY_PROMPT: 'body_prompt',
@@ -111,8 +125,26 @@
   };
   let state = STATE.IDLE;
   let anon = false;
+  let anonVoiceId = 'operator';
+  let lastPreviewedVoice = null;
   let handleBlob = null;
   let bodyBlob = null;
+
+  const VOICE_SAMPLE_BASE = 'https://ltaaiiqtrmlqrzhglxob.supabase.co/storage/v1/object/public/hackersirl-audio/voice-samples';
+  const VOICE_OPTIONS = [
+    { num: '1', id: 'operator', label: 'the operator' },
+    { num: '2', id: 'trucker',  label: 'the trucker' },
+    { num: '3', id: 'anchor',   label: 'the news anchor' },
+  ];
+
+  const playVoiceSample = (id) => new Promise((resolve) => {
+    if (currentPromptAudio) { try { currentPromptAudio.pause(); } catch(e){} }
+    const a = new Audio(`${VOICE_SAMPLE_BASE}/${id}.mp3`);
+    currentPromptAudio = a;
+    a.onended = () => { currentPromptAudio = null; resolve(); };
+    a.onerror = () => { currentPromptAudio = null; resolve(); };
+    a.play().catch(() => resolve());
+  });
 
   // ── DOM refs ───────────────────────────────────────────────────────
   const $status = document.getElementById('status');
@@ -251,8 +283,30 @@
 
     if (state === STATE.MENU) {
       if (k === '1') { anon = false; await goHandlePrompt(); }
-      else if (k === '2') { anon = true; await speak('anon-confirm'); await goHandlePrompt(); }
+      else if (k === '2') { anon = true; await goAnonPickVoice(); }
       else { errorBeep(); }
+    } else if (state === STATE.ANON_PICK_VOICE) {
+      const choice = VOICE_OPTIONS.find(v => v.num === k);
+      if (choice) {
+        lastPreviewedVoice = choice.id;
+        anonVoiceId = choice.id;
+        setStatus([
+          ['meta', `auditioning: ${choice.label}`],
+          ['prompt', 'press * to lock in this voice'],
+          ['prompt', 'or press 1/2/3 to hear another'],
+        ]);
+        await playVoiceSample(choice.id);
+        setStatus([
+          ['ok', `last heard: ${choice.label}`],
+          ['prompt', 'press * to use this voice'],
+          ['prompt', 'or 1/2/3 to hear another'],
+        ]);
+      } else if (k === '*') {
+        if (!lastPreviewedVoice) { errorBeep(); return; }
+        await goHandlePrompt();
+      } else {
+        errorBeep();
+      }
     } else if (state === STATE.REVIEW) {
       if (k === '1') { await replayBoth(); }
       else if (k === '2') { await goBodyPrompt(); }   // re-record body
@@ -279,42 +333,82 @@
     setDial('[ DIALING... ]', false);
     setHangup(true);
     setKeypadEnabled(false);
-    setStatus([['meta', 'CONNECTION ESTABLISHED'], ['prompt', 'dialing 1-904-915-HACK ...']]);
-    dialTone();
-    await new Promise(r => setTimeout(r, 1200));
-    setStatus([['meta', 'ringing...']]);
-    ringTone();
-    await new Promise(r => setTimeout(r, 1800));
+
+    // 1. Pickup
+    setStatus([['meta', 'PICKING UP RECEIVER...']]);
     pickupClick();
-    setStatus([['meta', '<<< PICKED UP >>>'], ['prompt', 'hackers irl operator log']]);
+    await sleep(400);
+
+    // 2. Dial tone
+    setStatus([['meta', 'DIAL TONE'], ['prompt', '...']]);
+    dialTone(1500);
+    await sleep(1600);
+
+    // 3. Dial the number — DTMF 1-for-1
+    setStatus([['meta', 'DIALING'], ['prompt', '1-904-915-HACK']]);
+    await dialNumber();
+    await sleep(400);
+
+    // 4. Ringing
+    setStatus([['meta', 'RINGING...'], ['prompt', '...']]);
+    // 3 cycles is too long; do 2 (~12s). User can interrupt by hanging up.
+    // Run async — pickup happens after ~6s regardless.
+    const ringPromise = ringSequence(2);
+    await sleep(6500);
+
+    // 5. Pickup at other end
+    pickupClick();
+    setStatus([['meta', '<<< CONNECTED >>>'], ['prompt', 'hackers irl operator log']]);
     state = STATE.MENU;
     setKeypadEnabled(true);
+
     await speak('greeting');
     await speak('menu');
     setStatus([
-      ['prompt', 'press 1: regular log'],
-      ['prompt', 'press 2: anonymous (voice scrambled)'],
+      ['prompt', '1 — regular log'],
+      ['prompt', '2 — anonymous (voice scrambled)'],
       ['meta', 'awaiting input...'],
     ]);
+  };
+
+  const goAnonPickVoice = async () => {
+    state = STATE.ANON_PICK_VOICE;
+    setKeypadEnabled(true);
+    setStatus([
+      ['meta', 'ANON MODE'],
+      ['prompt', 'pick a voice to scramble through'],
+      ['prompt', '1 — the operator'],
+      ['prompt', '2 — the trucker'],
+      ['prompt', '3 — the news anchor'],
+      ['prompt', '* — use last heard'],
+    ]);
+    await speak('anon-confirm');
   };
 
   const goHandlePrompt = async () => {
     state = STATE.HANDLE_PROMPT;
     setKeypadEnabled(false);
-    setStatus([['ok', anon ? 'anonymous mode armed' : 'standard mode'], ['prompt', 'next: 5-second handle recording']]);
+    setStatus([['ok', anon ? `anon armed · voice: ${anonVoiceId}` : 'standard mode'], ['prompt', 'next: 5-second handle recording']]);
     await speak('handle-prompt');
-    tone([1000], 350, 0.18);
+    await sleep(200);
+    tone([1000], 400, 0.18);
+    await sleep(450);   // let the tone finish + tiny gap before mic opens
+
     state = STATE.HANDLE_RECORDING;
-    setStatus([['err', '● RECORDING HANDLE'], ['meta', '5 seconds...']]);
     resetTimer();
-    startTimer(true);
     try {
       await startRecording(5000);
-      // Wait for the auto-stop
-      await new Promise(r => setTimeout(r, 5050));
+      // Visual countdown 5 → 1 so caller knows the cap.
+      for (let n = 5; n >= 1; n--) {
+        $timer.classList.add('recording');
+        $timer.textContent = `00:0${n}`;
+        setStatus([['err', '● RECORDING HANDLE'], ['meta', `${n}s left — say your handle and what you do`]]);
+        await sleep(1000);
+      }
       handleBlob = await stopRecording();
       stopTimer();
       tone([1000], 200, 0.18);
+      await sleep(250);
       await goBodyPrompt();
     } catch (e) {
       handleError(e);
@@ -326,7 +420,9 @@
     setKeypadEnabled(false);
     setStatus([['ok', 'handle: captured'], ['prompt', 'next: up to 10 minutes of message']]);
     await speak('body-prompt');
-    tone([1000], 350, 0.18);
+    await sleep(200);
+    tone([1000], 400, 0.18);
+    await sleep(450);
     state = STATE.BODY_RECORDING;
     setStatus([['err', '● RECORDING MESSAGE'], ['meta', 'press # to stop · max 10:00']]);
     resetTimer();
@@ -418,6 +514,7 @@
       if (handleBlob) fd.append('handle_audio', handleBlob, 'handle.webm');
       fd.append('body_audio', bodyBlob, 'body.webm');
       fd.append('anon', anon ? '1' : '0');
+      if (anon) fd.append('anon_voice_id', anonVoiceId);
       fd.append('source', 'web');
       if (tsTok) fd.append('cf_turnstile_token', tsTok);
       const r = await fetch('/api/web/submit', { method: 'POST', body: fd });
