@@ -7,18 +7,17 @@
 // ElevenLabs voice IDs come from runtime env (Pages Functions pass
 // env into each handler — there is no `process` global on Workers).
 
-// Anonymity voice slots — picked for "shadowy informant" feel rather
-// than purely synthetic, because human-with-modulation reads as "leet
-// hacker calling from a payphone" while pure robotic reads as "cheap
-// AI bot". Caller picks one in the IVR; S2S swap uses the env-mapped
-// voice ID. Current picks:
-//   operator → Shadow      — eerie thriller-narrator
-//   trucker  → Malakai     — low gravelly, just above a whisper
-//   anchor   → Dominic     — British brooding, commanding
+// Anonymity voice slots — picked for "leet hacker calling from a
+// payphone" rather than purely synthetic, because robotic reads as
+// "cheap AI bot". Caller picks one in the IVR; S2S swap uses the
+// env-mapped voice ID. Current picks:
+//   operator → Shadow      — eerie thriller-narrator (male)
+//   trucker  → Malakai     — low gravelly, just above a whisper (male)
+//   anchor   → Madison     — cool, calm, conversational (female)
 export const VOICE_LABELS = {
   operator: 'the source',
   trucker:  'the shadow',
-  anchor:   'the informant',
+  anchor:   'the cipher',
 };
 
 // Resolve a slot key to the configured ElevenLabs voice ID.

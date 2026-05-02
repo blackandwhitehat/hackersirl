@@ -154,9 +154,9 @@
 
   const VOICE_SAMPLE_BASE = 'https://ltaaiiqtrmlqrzhglxob.supabase.co/storage/v1/object/public/hackersirl-audio/voice-samples';
   const VOICE_OPTIONS = [
-    { num: '1', id: 'operator', label: 'the operator' },
-    { num: '2', id: 'trucker',  label: 'the trucker' },
-    { num: '3', id: 'anchor',   label: 'the news anchor' },
+    { num: '1', id: 'operator', label: 'the source' },
+    { num: '2', id: 'trucker',  label: 'the shadow' },
+    { num: '3', id: 'anchor',   label: 'the cipher' },
   ];
 
   const playVoiceSample = (id) => new Promise((resolve) => {
@@ -422,9 +422,9 @@
     setStatus([
       ['meta', 'ANON MODE'],
       ['prompt', 'pick a voice to scramble through'],
-      ['prompt', '1 — the operator'],
-      ['prompt', '2 — the trucker'],
-      ['prompt', '3 — the news anchor'],
+      ['prompt', '1 — the source'],
+      ['prompt', '2 — the shadow'],
+      ['prompt', '3 — the cipher'],
       ['prompt', '* — use last heard'],
     ]);
     await speak('anon-confirm');
