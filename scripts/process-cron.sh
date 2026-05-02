@@ -234,9 +234,10 @@ EOF
     --arg ti "$TITLE" \
     --arg de "$DESC" \
     --arg hi "$HANDLE_INTRO_URL" \
+    --arg hil "$INTRO_LINE" \
     --argjson sn "$NOTES_JSON" \
-    'if $hi == "" then {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, preview_input_hash:null}
-     else {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, handle_intro_url:$hi, preview_input_hash:null}
+    'if $hi == "" then {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, handle_intro_text:$hil, preview_input_hash:null}
+     else {transcript:$t, suggested_title:$ti, suggested_description:$de, show_notes:$sn, handle_intro_url:$hi, handle_intro_text:$hil, preview_input_hash:null}
      end')
 
   HTTP=$(curl -s -o /tmp/hir-patch-resp -w "%{http_code}" -X PATCH \

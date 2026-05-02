@@ -196,6 +196,7 @@ async function load() {
     LIST.querySelectorAll('.btn-update').forEach(b => b.addEventListener('click', onUpdate));
     LIST.querySelectorAll('.btn-unpublish').forEach(b => b.addEventListener('click', onUnpublish));
     LIST.querySelectorAll('.btn-rerender').forEach(b => b.addEventListener('click', onRerender));
+    LIST.querySelectorAll('.btn-intro-render').forEach(b => b.addEventListener('click', onIntroRender));
   } catch (e) {
     LIST.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
@@ -219,7 +220,16 @@ function renderSubmission(s) {
           </div>
         </div>
       </div>
-      ${s.handle_audio_url ? `<div class="audio-row"><label>Handle</label><audio controls preload="metadata" src="${audioSrc(s.handle_audio_url)}"></audio></div>` : ''}
+      ${s.handle_audio_url ? `<div class="audio-row"><label>Handle (caller)</label><audio controls preload="metadata" src="${audioSrc(s.handle_audio_url)}"></audio></div>` : ''}
+      ${s.handle_intro_url || s.handle_intro_text ? `
+        <div class="audio-row" style="border:1px dashed #00ff88;padding:0.6rem;border-radius:6px;margin-top:0.4rem">
+          <label>Host intro (TTS in presenter voice)</label>
+          ${s.handle_intro_url ? `<audio controls preload="metadata" src="${audioSrc(s.handle_intro_url)}"></audio>` : ''}
+          <textarea class="intro-text" rows="2" style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:inherit;padding:0.5rem;font-size:0.85rem;resize:vertical;margin-top:0.4rem;width:100%">${esc(s.handle_intro_text || '')}</textarea>
+          <div style="margin-top:0.4rem">
+            <button class="btn btn-intro-render">Save & re-render intro</button>
+          </div>
+        </div>` : ''}
       ${bodyAudio ? `<div class="audio-row"><label>Body${isAnon && s.body_audio_anon_url ? ' (anonymized)' : ''}</label><audio controls preload="metadata" src="${audioSrc(bodyAudio)}"></audio></div>` : '<div class="sub-meta">No body audio yet.</div>'}
       ${isAnon && s.body_audio_url && s.body_audio_anon_url ? `<details><summary>Original audio (anon caller)</summary><audio controls preload="metadata" src="${audioSrc(s.body_audio_url)}"></audio></details>` : ''}
       <details>
@@ -321,6 +331,27 @@ async function onReject(ev) {
     body: JSON.stringify({ submission_id: id, reason: reason || null }),
   });
   if (r.ok) { load(); } else { alert('Reject failed: ' + r.status); ev.target.disabled = false; }
+}
+
+async function onIntroRender(ev) {
+  const card = ev.target.closest('.sub');
+  const submission_id = card?.dataset.id;
+  const text = card?.querySelector('.intro-text')?.value.trim();
+  if (!submission_id) return;
+  if (!text || text.length < 5) { alert('Intro text needs at least 5 characters.'); return; }
+  ev.target.disabled = true; ev.target.textContent = 'Rendering...';
+  const r = await fetch('/api/admin/intro-render', {
+    method: 'POST', credentials: 'include',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ submission_id, text }),
+  });
+  if (r.ok) {
+    ev.target.textContent = 'Saved ✓';
+    setTimeout(() => load(), 1000);
+  } else {
+    alert('Re-render failed: ' + r.status + '\n' + (await r.text()).slice(0, 200));
+    ev.target.disabled = false; ev.target.textContent = 'Save & re-render intro';
+  }
 }
 
 async function onRerender(ev) {

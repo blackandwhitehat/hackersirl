@@ -13,7 +13,7 @@ export async function onRequestGet({ request, env }) {
   const status = url.searchParams.get('status') || 'ready,processing,recording,publishing,published';
   const params = {
     status: `in.(${status})`,
-    select: 'id,handle,handle_audio_url,body_audio_url,body_audio_anon_url,anon,anon_voice_id,duration_seconds,transcript,suggested_title,suggested_description,status,created_at,preview_audio_url,preview_size_bytes,preview_duration_seconds,hir_episodes(id,title,description,episode_number,season,audio_url,audio_size_bytes,audio_duration_seconds,processing_state,published_at,guid)',
+    select: 'id,handle,handle_audio_url,handle_intro_url,handle_intro_text,body_audio_url,body_audio_anon_url,anon,anon_voice_id,duration_seconds,transcript,suggested_title,suggested_description,show_notes,status,created_at,preview_audio_url,preview_size_bytes,preview_duration_seconds,hir_episodes(id,title,description,episode_number,season,audio_url,audio_size_bytes,audio_duration_seconds,processing_state,published_at,guid)',
     order: 'created_at.desc',
     limit: '100',
   };
