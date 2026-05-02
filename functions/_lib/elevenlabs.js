@@ -7,10 +7,16 @@
 // ElevenLabs voice IDs come from runtime env (Pages Functions pass
 // env into each handler — there is no `process` global on Workers).
 
+// Voice-changer style anonymity voices. Each is unmistakably synthetic
+// so the listener knows the caller is disguised. See env for current
+// IDs (ELEVENLABS_VOICE_OPERATOR/TRUCKER/ANCHOR) — pick is intentional:
+//   operator → smooth genderless mechanical
+//   trucker  → retro 1950s sci-fi computer
+//   anchor   → calm futuristic AI
 export const VOICE_LABELS = {
-  operator: 'the operator',
-  trucker:  'the trucker',
-  anchor:   'the news anchor',
+  operator: 'the synthetic operator',
+  trucker:  'the retro machine',
+  anchor:   'the AI presenter',
 };
 
 // Resolve a slot key to the configured ElevenLabs voice ID.
