@@ -13,9 +13,18 @@
 
 import { sbSelect, sbUpdate, sbStorageUpload } from '../_lib/supabase.js';
 import { resolveVoice, transcribe, ttsText, isolateVoice } from '../_lib/elevenlabs.js';
+import { timingSafeEqual } from '../_lib/auth.js';
 
 export async function onRequestPost({ request, env }) {
-  if ((request.headers.get('x-internal-secret') || '') !== (env.INTERNAL_SECRET || '__missing__')) {
+  // Fail closed: if the secret env is unset, reject everything.
+  // Old behavior fell back to the literal '__missing__' which made
+  // the bypass discoverable just by reading source.
+  if (!env.INTERNAL_SECRET) {
+    console.error('process.js: INTERNAL_SECRET unset — rejecting');
+    return new Response('service unavailable', { status: 503 });
+  }
+  const presented = request.headers.get('x-internal-secret') || '';
+  if (!timingSafeEqual(presented, env.INTERNAL_SECRET)) {
     return new Response('forbidden', { status: 403 });
   }
   const { call_sid } = await request.json();

@@ -47,42 +47,55 @@ export async function onRequestPost({ request, env, waitUntil }) {
     });
   }
 
-  // Cloudflare Turnstile verification — gates the submit endpoint
-  // against drive-by spam. Browser solves an invisible challenge and
-  // hands us the token; we exchange it server-side with CF's siteverify
-  // endpoint. If TURNSTILE_SECRET isn't configured, the check is
-  // skipped (dev / pre-rollout fallback) and a console warning logs.
-  if (env.TURNSTILE_SECRET) {
-    const tsTok = form.get('cf_turnstile_token');
-    if (!tsTok) {
-      return new Response(JSON.stringify({ error: 'turnstile token required' }), {
-        status: 401, headers: { 'content-type': 'application/json' },
-      });
-    }
-    const ip = request.headers.get('cf-connecting-ip') || '';
-    const verifyResp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        secret: env.TURNSTILE_SECRET,
-        response: tsTok.toString(),
-        ...(ip ? { remoteip: ip } : {}),
-      }),
+  // Cloudflare Turnstile — gates the submit endpoint against drive-by
+  // spam. Fails CLOSED: if TURNSTILE_SECRET is unset (deploy misconfig)
+  // we return 503 instead of accepting unprotected submissions.
+  if (!env.TURNSTILE_SECRET) {
+    console.error('submit: TURNSTILE_SECRET unset — refusing to accept');
+    return new Response(JSON.stringify({ error: 'service unavailable' }), {
+      status: 503, headers: { 'content-type': 'application/json' },
     });
-    const verify = await verifyResp.json().catch(() => ({}));
-    if (!verify.success) {
-      return new Response(JSON.stringify({ error: 'turnstile failed', codes: verify['error-codes'] || [] }), {
-        status: 401, headers: { 'content-type': 'application/json' },
-      });
-    }
-  } else {
-    console.warn('TURNSTILE_SECRET not set — submit endpoint is unprotected');
+  }
+  const tsTok = form.get('cf_turnstile_token');
+  if (!tsTok) {
+    return new Response(JSON.stringify({ error: 'turnstile token required' }), {
+      status: 401, headers: { 'content-type': 'application/json' },
+    });
+  }
+  const ip = request.headers.get('cf-connecting-ip') || '';
+  const verifyResp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      secret: env.TURNSTILE_SECRET,
+      response: tsTok.toString(),
+      ...(ip ? { remoteip: ip } : {}),
+    }),
+  });
+  const verify = await verifyResp.json().catch(() => ({}));
+  if (!verify.success) {
+    return new Response(JSON.stringify({ error: 'turnstile failed', codes: verify['error-codes'] || [] }), {
+      status: 401, headers: { 'content-type': 'application/json' },
+    });
   }
 
   const bodyFile = form.get('body_audio');
   const handleFile = form.get('handle_audio');
   const anon = form.get('anon') === '1';
   const anonVoice = (form.get('anon_voice_id') || 'operator').toString();
+
+  // Audio MIME allow-list — the bucket is public, an HTML/SVG/JS blob
+  // here would render with whatever content-type we stored, opening
+  // stored-XSS. Reject anything that isn't a known audio type.
+  const ALLOWED_AUDIO = new Set(['audio/webm','audio/ogg','audio/mp4','audio/m4a','audio/wav','audio/wave','audio/x-wav','audio/mpeg','audio/mp3']);
+  const checkMime = (f, name) => {
+    const t = (f.type || '').split(';')[0].trim().toLowerCase();
+    if (!ALLOWED_AUDIO.has(t)) {
+      throw new Response(JSON.stringify({ error: `${name} must be audio (got: ${t || 'unknown'})` }), {
+        status: 415, headers: { 'content-type': 'application/json' },
+      });
+    }
+  };
 
   if (!bodyFile || typeof bodyFile === 'string') {
     return new Response(JSON.stringify({ error: 'body_audio required' }), {
@@ -98,6 +111,10 @@ export async function onRequestPost({ request, env, waitUntil }) {
     return new Response(JSON.stringify({ error: 'handle_audio too large' }), {
       status: 413, headers: { 'content-type': 'application/json' },
     });
+  }
+  try { checkMime(bodyFile, 'body_audio'); } catch (e) { if (e instanceof Response) return e; throw e; }
+  if (handleFile && typeof handleFile !== 'string' && handleFile.size > 0) {
+    try { checkMime(handleFile, 'handle_audio'); } catch (e) { if (e instanceof Response) return e; throw e; }
   }
 
   const id = uuid();

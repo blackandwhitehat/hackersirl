@@ -31,8 +31,15 @@ function durationFmt(seconds) {
 }
 
 export async function onRequest({ env }) {
+  // Only emit episodes that are FULLY rendered + intentionally
+  // published. Without these filters, the moment a 'pending' or
+  // 'preview' row exists in hir_episodes it would leak into the
+  // public RSS — and Apple/Spotify cache GUIDs permanently, so
+  // recovery is impossible.
   const eps = await sbSelect(env, 'hir_episodes', {
     select: '*',
+    processing_state: 'eq.live',
+    published_at: 'not.is.null',
     order: 'published_at.desc',
     limit: '500',
   });

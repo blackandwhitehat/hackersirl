@@ -10,19 +10,12 @@
 //   upload: client already-uploaded URL OR base64 payload uploaded by server
 
 import { sbSelect, sbInsert, sbUpdate, sbStorageUpload } from '../../_lib/supabase.js';
-
-function authorized(request, env) {
-  const accessEmail = request.headers.get('cf-access-authenticated-user-email');
-  if (accessEmail && env.ADMIN_EMAIL && accessEmail.toLowerCase() === env.ADMIN_EMAIL.toLowerCase()) return true;
-  const auth = request.headers.get('authorization') || '';
-  if (env.ADMIN_BEARER && auth === `Bearer ${env.ADMIN_BEARER}`) return true;
-  return false;
-}
+import { isAdmin } from '../../_lib/auth.js';
 
 const TYPES = ['intro', 'outro', 'bg_intro', 'bg_outro', 'phone_tones'];
 
 export async function onRequestGet({ request, env }) {
-  if (!authorized(request, env)) return new Response('forbidden', { status: 403 });
+  if (!isAdmin(request, env)) return new Response('forbidden', { status: 403 });
   // One row per type — latest active.
   const rows = await sbSelect(env, 'hir_show_assets', {
     active: 'eq.true',
@@ -38,7 +31,7 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPost({ request, env }) {
-  if (!authorized(request, env)) return new Response('forbidden', { status: 403 });
+  if (!isAdmin(request, env)) return new Response('forbidden', { status: 403 });
   const ct = request.headers.get('content-type') || '';
 
   let assetType, mode, text, voiceId, uploadedBuf, uploadedMime;
@@ -62,35 +55,54 @@ export async function onRequestPost({ request, env }) {
   if (!TYPES.includes(assetType)) return new Response('bad asset_type', { status: 400 });
   if (!['tts', 'upload'].includes(mode))  return new Response('bad mode', { status: 400 });
 
+  // Accept-list of audio MIMEs for upload mode. Bucket is public, so
+  // an HTML/SVG/JS body would render with the stored content-type and
+  // become stored XSS. Reject anything that isn't audio.
+  const ALLOWED_AUDIO = new Set(['audio/webm','audio/ogg','audio/mp4','audio/m4a','audio/wav','audio/wave','audio/x-wav','audio/mpeg','audio/mp3']);
+  // Cap on TTS text to bound EL spend per request.
+  const TTS_MAX_CHARS = 5000;
+
   let audioUrl, sizeBytes = 0;
 
   if (mode === 'tts') {
     if (!text) return new Response('text required for tts mode', { status: 400 });
     if (!env.ELEVENLABS_API_KEY) return new Response('ELEVENLABS_API_KEY not configured', { status: 500 });
     const vid = voiceId || env.ELEVENLABS_VOICE_OPERATOR || 'nPczCjzI2devNBz1zQrb';
+    const clipped = text.slice(0, TTS_MAX_CHARS);
     const elResp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vid)}?output_format=mp3_44100_128`, {
       method: 'POST',
       headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({
-        text, model_id: 'eleven_turbo_v2_5',
+        text: clipped, model_id: 'eleven_turbo_v2_5',
         voice_settings: { stability: 0.55, similarity_boost: 0.85, style: 0.30, use_speaker_boost: true },
       }),
     });
     if (!elResp.ok) {
+      // Don't leak EL upstream error text to the client.
       const err = await elResp.text();
-      return new Response(`ElevenLabs ${elResp.status}: ${err.slice(0, 200)}`, { status: 502 });
+      console.error(`show-assets ElevenLabs ${elResp.status}: ${err.slice(0, 500)}`);
+      return new Response('upstream tts error', { status: 502 });
     }
     const buf = new Uint8Array(await elResp.arrayBuffer());
     sizeBytes = buf.byteLength;
     const key = `show/${assetType}-${Date.now()}.mp3`;
     audioUrl = await sbStorageUpload(env, 'hackersirl-audio', key, buf, 'audio/mpeg');
     voiceId = vid;
+    text = clipped;
   } else {
     // upload mode — file came as multipart
     if (!uploadedBuf) return new Response('file required for upload mode', { status: 400 });
+    const mimeKey = (uploadedMime || '').split(';')[0].trim().toLowerCase();
+    if (!ALLOWED_AUDIO.has(mimeKey)) {
+      return new Response(JSON.stringify({ error: `audio MIME required (got: ${mimeKey || 'unknown'})` }), {
+        status: 415, headers: { 'content-type': 'application/json' },
+      });
+    }
     sizeBytes = uploadedBuf.byteLength;
     const key = `show/${assetType}-${Date.now()}.mp3`;
-    audioUrl = await sbStorageUpload(env, 'hackersirl-audio', key, uploadedBuf, uploadedMime || 'audio/mpeg');
+    // Always upload as audio/mpeg regardless of source MIME so the
+    // public bucket only serves it as audio.
+    audioUrl = await sbStorageUpload(env, 'hackersirl-audio', key, uploadedBuf, 'audio/mpeg');
   }
 
   // Deactivate previous version of this asset_type so the cron only

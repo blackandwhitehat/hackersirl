@@ -20,8 +20,22 @@ export async function twilioForm(request) {
 // request actually came from Twilio so an attacker can't fake call
 // flow events. See:
 // https://www.twilio.com/docs/usage/webhooks/webhooks-security
+//
+// Fails closed:
+//  • no env.TWILIO_AUTH_TOKEN              → reject (was: empty-key
+//                                            HMAC, attacker-forgeable)
+//  • no X-Twilio-Signature header          → reject
+//  • signature mismatch                    → reject (constant-time)
+//
+// SKIP_TWILIO_VERIFY env-flag bypass was removed. Local testing now
+// has to use real Twilio fixtures or the signed CLI sandbox.
+import { timingSafeEqual } from './auth.js';
+
 export async function verifyTwilioSignature(request, env, params, urlOverride) {
-  if (env.SKIP_TWILIO_VERIFY === '1') return true; // for local testing
+  if (!env.TWILIO_AUTH_TOKEN) {
+    console.error('verifyTwilioSignature: TWILIO_AUTH_TOKEN unset — rejecting');
+    return false;
+  }
   const sig = request.headers.get('x-twilio-signature');
   if (!sig) return false;
   // Twilio computes HMAC-SHA1 of (full URL + sorted form fields concatenated).
@@ -31,12 +45,12 @@ export async function verifyTwilioSignature(request, env, params, urlOverride) {
   for (const k of sortedKeys) payload += k + params[k];
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
-    'raw', enc.encode(env.TWILIO_AUTH_TOKEN || ''),
+    'raw', enc.encode(env.TWILIO_AUTH_TOKEN),
     { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']
   );
   const mac = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
   const macB64 = btoa(String.fromCharCode(...new Uint8Array(mac)));
-  return macB64 === sig;
+  return timingSafeEqual(macB64, sig);
 }
 
 // Common XML escape for caller-supplied strings going into TwiML.
