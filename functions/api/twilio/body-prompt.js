@@ -13,7 +13,7 @@ export async function onRequestPost({ request, env }) {
     <Record
       action="/api/twilio/body-recorded"
       method="POST"
-      timeout="3"
+      timeout="10"
       maxLength="600"
       finishOnKey="#"
       playBeep="true"/>

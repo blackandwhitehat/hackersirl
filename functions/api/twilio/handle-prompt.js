@@ -14,7 +14,7 @@ export async function onRequestPost({ request, env }) {
     <Record
       action="/api/twilio/handle-recorded"
       method="POST"
-      timeout="3"
+      timeout="6"
       maxLength="60"
       finishOnKey="#"
       playBeep="true"
