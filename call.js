@@ -61,26 +61,39 @@
   const hangupClick = () => tone([400, 250], 90, 0.10);
   const errorBeep = () => { tone([480, 620], 250, 0.16); };
 
-  // ── Web Speech API for prompts (v0; swap to ElevenLabs MP3s later) ─
-  const speak = (text) => new Promise((resolve) => {
-    if (!('speechSynthesis' in window)) { resolve(); return; }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    // Pick a US-English female voice if we can find one (closest to Twilio's Polly.Joanna)
-    const voices = speechSynthesis.getVoices();
-    const v = voices.find(v => /en-US/.test(v.lang) && /female|samantha|joanna|allison|kate/i.test(v.name))
-           || voices.find(v => /en-US/.test(v.lang))
-           || voices[0];
-    if (v) u.voice = v;
-    u.rate = 1.0;
-    u.pitch = 1.0;
-    u.onend = () => resolve();
-    u.onerror = () => resolve();
-    speechSynthesis.speak(u);
+  // ── Pre-rendered IVR prompts (ElevenLabs Brian, served from Storage) ──
+  // Each prompt is a static MP3 in the public hackersirl-audio bucket.
+  // Render script: scripts/render-ivr.sh (run once after EL key change).
+  const IVR_BASE = 'https://ltaaiiqtrmlqrzhglxob.supabase.co/storage/v1/object/public/hackersirl-audio/ivr';
+  const PROMPT_CACHE = {};
+  let currentPromptAudio = null;
+
+  // Preload so first DIAL → playback feels instant
+  const preloadPrompts = () => {
+    ['greeting','menu','anon-confirm','handle-prompt','body-prompt','review-menu','submitted'].forEach(name => {
+      const a = new Audio(`${IVR_BASE}/${name}.mp3`);
+      a.preload = 'auto';
+      PROMPT_CACHE[name] = a;
+    });
+  };
+
+  // Play a named prompt; resolves when playback ends. iOS Safari needs
+  // the AudioContext unlocked first, which ensureCtx() does on every
+  // tone/keypress so this is fine after the first DIAL click.
+  const speak = (name) => new Promise((resolve) => {
+    if (currentPromptAudio) {
+      try { currentPromptAudio.pause(); } catch(e) {}
+    }
+    const cached = PROMPT_CACHE[name];
+    const a = cached ? cached : new Audio(`${IVR_BASE}/${name}.mp3`);
+    if (cached) a.currentTime = 0;
+    currentPromptAudio = a;
+    a.onended = () => { currentPromptAudio = null; resolve(); };
+    a.onerror = () => { currentPromptAudio = null; resolve(); };
+    a.play().catch(() => resolve());
   });
 
-  // Some browsers populate voices async — warm them.
-  if ('speechSynthesis' in window) speechSynthesis.getVoices();
+  preloadPrompts();
 
   // ── State machine ──────────────────────────────────────────────────
   const STATE = {
@@ -238,7 +251,7 @@
 
     if (state === STATE.MENU) {
       if (k === '1') { anon = false; await goHandlePrompt(); }
-      else if (k === '2') { anon = true; await speak("Anonymous mode. Your voice will be scrambled before anyone hears it. For now I'll just record you straight; the swap happens server-side."); await goHandlePrompt(); }
+      else if (k === '2') { anon = true; await speak('anon-confirm'); await goHandlePrompt(); }
       else { errorBeep(); }
     } else if (state === STATE.REVIEW) {
       if (k === '1') { await replayBoth(); }
@@ -276,8 +289,8 @@
     setStatus([['meta', '<<< PICKED UP >>>'], ['prompt', 'hackers irl operator log']]);
     state = STATE.MENU;
     setKeypadEnabled(true);
-    await speak("Hey, you've reached the Hackers IRL operator log. Brain dump for up to ten minutes about whatever's on your mind.");
-    await speak("To leave a regular log, press 1. To stay anonymous, press 2.");
+    await speak('greeting');
+    await speak('menu');
     setStatus([
       ['prompt', 'press 1: regular log'],
       ['prompt', 'press 2: anonymous (voice scrambled)'],
@@ -289,7 +302,7 @@
     state = STATE.HANDLE_PROMPT;
     setKeypadEnabled(false);
     setStatus([['ok', anon ? 'anonymous mode armed' : 'standard mode'], ['prompt', 'next: 5-second handle recording']]);
-    await speak("Record your handle and what you do, in five seconds, after the tone.");
+    await speak('handle-prompt');
     tone([1000], 350, 0.18);
     state = STATE.HANDLE_RECORDING;
     setStatus([['err', '● RECORDING HANDLE'], ['meta', '5 seconds...']]);
@@ -312,7 +325,7 @@
     state = STATE.BODY_PROMPT;
     setKeypadEnabled(false);
     setStatus([['ok', 'handle: captured'], ['prompt', 'next: up to 10 minutes of message']]);
-    await speak("Now give us your message. Up to ten minutes. Press the pound key when you're done.");
+    await speak('body-prompt');
     tone([1000], 350, 0.18);
     state = STATE.BODY_RECORDING;
     setStatus([['err', '● RECORDING MESSAGE'], ['meta', 'press # to stop · max 10:00']]);
@@ -356,7 +369,7 @@
       ['prompt', '3 = submit it'],
       ['prompt', '* = hang up (discard)'],
     ]);
-    await speak("Press one to hear it back. Two to re-record. Three to send it. Star to hang up.");
+    await speak('review-menu');
   };
 
   const replayBoth = async () => {
@@ -400,6 +413,7 @@
         ['prompt', 'thanks for picking up the phone'],
       ]);
       setDial('[ DONE ]', false);
+      await speak('submitted');
     } catch (e) {
       handleError(e);
     }
