@@ -57,13 +57,20 @@ BG_OUTRO_URL=$(fetch_asset bg_outro)
 # on the row, the rendered MP3 is up to date; if not, the episode
 # needs to be re-rendered. Lets the cron skip unchanged work and
 # auto-pick up after any asset/text edit.
+#
+# RENDER_VERSION is mixed into every hash so changes to the cron's
+# mix logic itself (filter graph, fade timing, concat order, etc.)
+# invalidate every existing hash and trigger a one-time catalog re-
+# render. Bump it whenever the render pipeline changes.
+RENDER_VERSION="v2"
 sha() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
 
 # Compose the canonical input string for an episode. Order matters
 # (changing the order would invalidate every existing hash).
 episode_inputs() {
   local title="$1" desc="$2" src="$3" anon="$4" handle="$5"
-  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+    "$RENDER_VERSION" \
     "${INTRO_URL:-}" "${OUTRO_URL:-}" "${BG_INTRO_URL:-}" "${BG_OUTRO_URL:-}" "${PHONE_URL:-}" \
     "${src:-}" "${handle:-}" "${anon:-false}" "${title:-}" "${desc:-}"
 }
@@ -165,11 +172,16 @@ render_episode() {
     intro_mixed="$INTRO_LOCAL"
   fi
 
-  # Step 2: pre-mix outro voice + bg_outro (same balance + tail fade).
+  # Step 2: pre-mix outro voice + bg_outro. NO afade here — the
+  # previous version had `afade=out:st=0:d=2` which blanked the
+  # entire outro after 2s (fade *starts* at second 0, so by second 2
+  # the audio is silent forever). The bg track's own fade-out shapes
+  # the tail; the voice ends naturally. If we want a final-mix fade
+  # we'd add it after loudnorm, not on the outro chunk in isolation.
   local outro_mixed="$WORKDIR/${id}-outro-mixed.mp3"
   if [ -n "$BG_OUTRO_LOCAL" ] && [ -s "$BG_OUTRO_LOCAL" ]; then
     ffmpeg -y -i "$OUTRO_LOCAL" -i "$BG_OUTRO_LOCAL" \
-      -filter_complex "[1:a]volume=0.35,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,afade=out:st=0:d=2[out]" \
+      -filter_complex "[1:a]volume=0.35,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]" \
       -map "[out]" -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k "$outro_mixed" > "$WORKDIR/$id.outromix.log" 2>&1 || {
         echo "    outro mix failed"; tail -5 "$WORKDIR/$id.outromix.log"; outro_mixed="$OUTRO_LOCAL"; }
   else
