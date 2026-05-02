@@ -8,7 +8,7 @@
 
 import { twimlResponse, twilioForm, verifyTwilioSignature } from '../../_lib/twiml.js';
 import { sbSelect, sbUpdate, sbStorageUpload } from '../../_lib/supabase.js';
-import { resolveVoice, transcribe, ttsText } from '../../_lib/elevenlabs.js';
+import { resolveVoice, swapVoice } from '../../_lib/elevenlabs.js';
 import { holdMusicUrl } from '../../_lib/hold-music.js';
 
 export async function onRequestPost({ request, env, waitUntil }) {
@@ -47,10 +47,14 @@ export async function onRequestPost({ request, env, waitUntil }) {
   return twimlResponse(xml);
 }
 
-// Live TTS-of-transcript path — true voice replacement, zero source
-// caller traces. Pipeline:
-//   Twilio recording → ElevenLabs Scribe → ElevenLabs TTS in target
-//   voice → upload as body_audio_anon_url → poll loop plays it
+// Speech-to-speech voice swap. Keeps the caller's exact words, prosody,
+// and pacing — only the timbre is replaced. Settings are cranked to
+// maximum suppression (see _lib/elevenlabs.js swapVoice) so the output
+// no longer carries voiceprint markers of the source.
+//
+// We use S2S (not TTS-of-transcript) because Scribe mistranscriptions
+// would silently corrupt the message — a wrong word said in a clean
+// voice is worse than a real word said in a disguised voice.
 async function processAnon(env, submissionId, twilioMp3Url, voiceId) {
   try {
     const elVoiceId = resolveVoice(env, voiceId || 'operator');
@@ -61,28 +65,17 @@ async function processAnon(env, submissionId, twilioMp3Url, voiceId) {
     if (!audio.ok) return;
     const audioBuf = new Uint8Array(await audio.arrayBuffer());
 
-    // 1. Transcribe via Scribe.
-    const transcript = await transcribe(env, audioBuf);
-    if (!transcript || transcript.length < 3) {
-      console.error('anon transcribe returned empty for', submissionId);
-      return;
-    }
+    const swapped = await swapVoice(env, audioBuf, elVoiceId);
 
-    // 2. TTS the transcript in the chosen target voice.
-    const ttsAudio = await ttsText(env, elVoiceId, transcript);
-
-    // 3. Upload as the canonical anon audio + persist transcript so
-    //    the show-notes pipeline doesn't have to re-transcribe.
     const url = await sbStorageUpload(
       env,
       'hackersirl-audio',
       `anon/${submissionId}.mp3`,
-      ttsAudio,
+      swapped,
       'audio/mpeg'
     );
     await sbUpdate(env, 'hir_submissions', { id: submissionId }, {
       body_audio_anon_url: url,
-      transcript,
     });
   } catch (e) {
     console.error('anon process failed:', e);

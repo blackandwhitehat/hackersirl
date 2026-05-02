@@ -12,7 +12,7 @@
 // Protected by INTERNAL_SECRET so external callers can't trigger it.
 
 import { sbSelect, sbUpdate, sbStorageUpload, sbStorageDelete } from '../_lib/supabase.js';
-import { resolveVoice, transcribe, ttsText, isolateVoice } from '../_lib/elevenlabs.js';
+import { resolveVoice, swapVoice, transcribe, ttsText, isolateVoice } from '../_lib/elevenlabs.js';
 import { timingSafeEqual } from '../_lib/auth.js';
 
 export async function onRequestPost({ request, env }) {
@@ -68,22 +68,46 @@ export async function onRequestPost({ request, env }) {
     bodyBuf = cleanedBody;
   }
 
-  // Anon path: TTS-of-transcript via Scribe + EL TTS. True voice
-  // replacement, no source-caller traces. Skip if already done
-  // in-call by /api/twilio/anon-process.
-  let anonRendered = false;
+  // Anon path: speech-to-speech voice swap. Keeps the caller's exact
+  // words and timing — only the timbre is replaced. Settings are
+  // cranked to maximum suppression in _lib/elevenlabs.js swapVoice.
+  // S2S is preferred over TTS-of-transcript: a Scribe mistranscription
+  // would silently corrupt content, which is worse than imperfect
+  // voice anonymization. Skip if already done in-call by anon-process.
   if (sub.anon && !sub.body_audio_anon_url && bodyBuf && env.ELEVENLABS_API_KEY) {
     try {
       const voiceId = resolveVoice(env, sub.anon_voice_id || 'operator');
-      const transcript = await transcribe(env, bodyBuf);
-      if (transcript && transcript.length >= 3) {
-        const ttsAudio = await ttsText(env, voiceId, transcript);
-        updates.body_audio_anon_url = await sbStorageUpload(env, 'hackersirl-audio', `anon/${sub.id}.mp3`, ttsAudio, 'audio/mpeg');
-        if (!sub.transcript) updates.transcript = transcript;
-        anonRendered = true;
+      const swapped = await swapVoice(env, bodyBuf, voiceId);
+      updates.body_audio_anon_url = await sbStorageUpload(env, 'hackersirl-audio', `anon/${sub.id}.mp3`, swapped, 'audio/mpeg');
+    } catch (e) {
+      console.error('anon swap failed:', e);
+    }
+  }
+
+  // Handle "presenter" pass: transcribe the caller's recorded handle
+  // and have the AI presenter (env.ELEVENLABS_VOICE_PRESENTER, fallback
+  // to the anchor voice) re-speak it. The final mix uses this in place
+  // of the raw handle audio so the show feels produced and the caller's
+  // voice doesn't appear before the (already anonymized) body.
+  if (sub.handle_audio_url && !sub.handle_presented_url && env.ELEVENLABS_API_KEY) {
+    try {
+      const handleBuf = await fetchTwilio(updates.handle_audio_url || sub.handle_audio_url).catch(() =>
+        // If the URL is already Supabase (re-hosted earlier), fetch without auth.
+        fetch(updates.handle_audio_url || sub.handle_audio_url).then(r => r.ok ? r.arrayBuffer().then(b => new Uint8Array(b)) : null)
+      );
+      if (handleBuf) {
+        const handleText = (await transcribe(env, handleBuf) || '').trim();
+        if (handleText && handleText.length >= 2 && handleText.length <= 80) {
+          const presenterVoice = env.ELEVENLABS_VOICE_PRESENTER || env.ELEVENLABS_VOICE_ANCHOR;
+          if (presenterVoice) {
+            const ttsAudio = await ttsText(env, presenterVoice, handleText);
+            updates.handle_presented_url = await sbStorageUpload(env, 'hackersirl-audio', `handle-presented/${sub.id}.mp3`, ttsAudio, 'audio/mpeg');
+            updates.handle_text = handleText;
+          }
+        }
       }
     } catch (e) {
-      console.error('anon TTS failed:', e);
+      console.error('handle presenter pass failed:', e);
     }
   }
 
