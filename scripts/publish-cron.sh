@@ -16,9 +16,15 @@ set -a; source "$HOME/.claude/cron/.env"; set +a
 
 SUPABASE_URL="${SUPABASE_URL:-https://ltaaiiqtrmlqrzhglxob.supabase.co}"
 SUPABASE_KEY="$SUPABASE_SERVICE_ROLE_KEY"
-INTRO_URL="${SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/show/intro.mp3"
-OUTRO_URL="${SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/show/outro.mp3"
 TGSH="$HOME/.claude/cron/lib/tg.sh"
+
+# Show assets URLs are looked up at run time from hir_show_assets so
+# admin can swap intro/outro/bg/phone-tones without redeploying.
+fetch_asset() {
+  local atype="$1"
+  curl -s "${SUPABASE_URL}/rest/v1/hir_show_assets?asset_type=eq.${atype}&active=eq.true&order=created_at.desc&limit=1&select=audio_url" \
+    -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -r '.[0].audio_url // empty'
+}
 
 # Single-run guard
 LOCKDIR="/tmp/hackersirl-publish.lock.d"
@@ -52,47 +58,102 @@ PCOUNT=$(echo "$PREVIEWS" | jq 'length' 2>/dev/null || echo 0)
 echo "queue: $COUNT publish · $PCOUNT previews"
 [ "$COUNT" = "0" ] && [ "$PCOUNT" = "0" ] && exit 0
 
-# Cache intro/outro per run (skip the redownload on subsequent rows in same run)
+# Resolve current show assets at run time
+INTRO_URL=$(fetch_asset intro)
+OUTRO_URL=$(fetch_asset outro)
+PHONE_URL=$(fetch_asset phone_tones)
+BG_INTRO_URL=$(fetch_asset bg_intro)
+BG_OUTRO_URL=$(fetch_asset bg_outro)
+
 INTRO_LOCAL="$WORKDIR/intro.mp3"
 OUTRO_LOCAL="$WORKDIR/outro.mp3"
-curl -sLfo "$INTRO_LOCAL" "$INTRO_URL"
-curl -sLfo "$OUTRO_LOCAL" "$OUTRO_URL"
-[ ! -s "$INTRO_LOCAL" ] || [ ! -s "$OUTRO_LOCAL" ] && { echo "intro/outro fetch failed"; exit 1; }
+PHONE_LOCAL="$WORKDIR/phone.mp3"
+BG_INTRO_LOCAL="$WORKDIR/bg-intro.mp3"
+BG_OUTRO_LOCAL="$WORKDIR/bg-outro.mp3"
+
+curl -sLfo "$INTRO_LOCAL"     "$INTRO_URL"
+curl -sLfo "$OUTRO_LOCAL"     "$OUTRO_URL"
+[ -n "$PHONE_URL"    ] && curl -sLfo "$PHONE_LOCAL"    "$PHONE_URL"    || true
+[ -n "$BG_INTRO_URL" ] && curl -sLfo "$BG_INTRO_LOCAL" "$BG_INTRO_URL" || true
+[ -n "$BG_OUTRO_URL" ] && curl -sLfo "$BG_OUTRO_LOCAL" "$BG_OUTRO_URL" || true
+
+[ ! -s "$INTRO_LOCAL" ] || [ ! -s "$OUTRO_LOCAL" ] && { echo "intro/outro fetch failed (no active asset?)"; exit 1; }
+[ ! -s "$PHONE_LOCAL"    ] && PHONE_LOCAL=""
+[ ! -s "$BG_INTRO_LOCAL" ] && BG_INTRO_LOCAL=""
+[ ! -s "$BG_OUTRO_LOCAL" ] && BG_OUTRO_LOCAL=""
 
 # ── render_episode WORKID HANDLE_URL BODY_URL ANON OUT_PATH [TITLE DESC EP_NUM SEASON] ──
-# Renders the standard HackersIRL mix. Concats intro + handle + body +
-# outro for non-anon. For anon, the handle is dropped (it isn't run
-# through ElevenLabs S2S, so including it would unmask the caller).
-# Returns 0 on success, non-zero on failure.
+# Final episode mix:
+#   phone_tones (if active) → bg_intro+intro_voice mixed → handle (no bg)
+#   → body (no bg) → bg_outro+outro_voice mixed
+# Loudness normalized to -16 LUFS (Apple/Spotify spec). MP3 with ID3v2.
+#
+# Anon flow drops the handle (handle isn't S2S-swapped, would unmask).
+# bg_intro/bg_outro/phone_tones gracefully degrade if unset.
 render_episode() {
   local id="$1" handle_url="$2" body_url="$3" anon="$4" out="$5"
   local title="${6:-Hackers IRL}" desc="${7:-}" ep_num="${8:-1}" season="${9:-}"
   local body_in="$WORKDIR/${id}-body.in"
   local body_mp3="$WORKDIR/${id}-body.mp3"
-  local handle_mp3=""
 
   curl -sLfo "$body_in" "$body_url" || { echo "    body download failed"; return 1; }
   ffmpeg -y -i "$body_in" -vn -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k \
     "$body_mp3" > "$WORKDIR/$id.body.log" 2>&1 || {
       echo "    body normalize failed"; tail -3 "$WORKDIR/$id.body.log"; return 1; }
 
-  local inputs=(-i "$INTRO_LOCAL")
-  local concat_filter="[0:a]"
-  local n=1
+  # Step 1: pre-mix intro voice + bg_intro (bg ducked under voice via
+  # sidechaincompress when both available, else simple amix).
+  local intro_mixed="$WORKDIR/${id}-intro-mixed.mp3"
+  if [ -n "$BG_INTRO_LOCAL" ] && [ -s "$BG_INTRO_LOCAL" ]; then
+    ffmpeg -y -i "$INTRO_LOCAL" -i "$BG_INTRO_LOCAL" \
+      -filter_complex "[1:a]volume=0.20,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0,afade=in:st=0:d=0.5[out]" \
+      -map "[out]" -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k "$intro_mixed" > "$WORKDIR/$id.intromix.log" 2>&1 || {
+        echo "    intro mix failed"; tail -5 "$WORKDIR/$id.intromix.log"; intro_mixed="$INTRO_LOCAL"; }
+  else
+    intro_mixed="$INTRO_LOCAL"
+  fi
+
+  # Step 2: pre-mix outro voice + bg_outro
+  local outro_mixed="$WORKDIR/${id}-outro-mixed.mp3"
+  if [ -n "$BG_OUTRO_LOCAL" ] && [ -s "$BG_OUTRO_LOCAL" ]; then
+    ffmpeg -y -i "$OUTRO_LOCAL" -i "$BG_OUTRO_LOCAL" \
+      -filter_complex "[1:a]volume=0.20,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0,afade=out:st=0:d=2[out]" \
+      -map "[out]" -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k "$outro_mixed" > "$WORKDIR/$id.outromix.log" 2>&1 || {
+        echo "    outro mix failed"; tail -5 "$WORKDIR/$id.outromix.log"; outro_mixed="$OUTRO_LOCAL"; }
+  else
+    outro_mixed="$OUTRO_LOCAL"
+  fi
+
+  # Step 3: optional handle (skipped for anon)
+  local handle_mp3=""
   if [ "$anon" != "true" ] && [ -n "$handle_url" ] && [ "$handle_url" != "null" ]; then
     handle_mp3="$WORKDIR/${id}-handle.mp3"
     if curl -sLfo "$WORKDIR/${id}-handle.in" "$handle_url" \
        && ffmpeg -y -i "$WORKDIR/${id}-handle.in" -vn -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k \
             "$handle_mp3" > "$WORKDIR/$id.handle.log" 2>&1; then
-      inputs+=(-i "$handle_mp3")
-      concat_filter="${concat_filter}[${n}:a]"; n=$((n + 1))
+      :
+    else
+      handle_mp3=""
     fi
   fi
-  inputs+=(-i "$body_mp3"); concat_filter="${concat_filter}[${n}:a]"; n=$((n + 1))
-  inputs+=(-i "$OUTRO_LOCAL"); concat_filter="${concat_filter}[${n}:a]"; n=$((n + 1))
-  concat_filter="${concat_filter}concat=n=${n}:v=0:a=1[c];[c]loudnorm=I=-16:LRA=11:TP=-1.5[out]"
 
+  # Step 4: final concat — [phone] [intro_mixed] [handle?] [body] [outro_mixed]
+  local inputs=()
+  local cat=""
+  local n=0
+  if [ -n "$PHONE_LOCAL" ] && [ -s "$PHONE_LOCAL" ]; then
+    inputs+=(-i "$PHONE_LOCAL"); cat="${cat}[${n}:a]"; n=$((n + 1))
+  fi
+  inputs+=(-i "$intro_mixed"); cat="${cat}[${n}:a]"; n=$((n + 1))
+  if [ -n "$handle_mp3" ]; then
+    inputs+=(-i "$handle_mp3"); cat="${cat}[${n}:a]"; n=$((n + 1))
+  fi
+  inputs+=(-i "$body_mp3");    cat="${cat}[${n}:a]"; n=$((n + 1))
+  inputs+=(-i "$outro_mixed"); cat="${cat}[${n}:a]"; n=$((n + 1))
+
+  local concat_filter="${cat}concat=n=${n}:v=0:a=1[c];[c]loudnorm=I=-16:LRA=11:TP=-1.5[out]"
   local album="Hackers IRL${season:+ — Season $season}"
+
   ffmpeg -y "${inputs[@]}" \
     -filter_complex "$concat_filter" \
     -map "[out]" -ar 44100 -ac 1 -c:a libmp3lame -b:a 128k \
@@ -105,7 +166,7 @@ render_episode() {
     -metadata genre="Podcast" \
     -metadata comment="$desc" \
     "$out" > "$WORKDIR/$id.mix.log" 2>&1 || {
-      echo "    concat/loudnorm failed"; tail -8 "$WORKDIR/$id.mix.log"; return 1; }
+      echo "    final mix failed"; tail -10 "$WORKDIR/$id.mix.log"; return 1; }
   return 0
 }
 

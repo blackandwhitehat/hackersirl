@@ -102,8 +102,14 @@
     if (cached) a.currentTime = 0;
     currentPromptAudio = a;
     a.onended = () => { currentPromptAudio = null; resolve(); };
-    a.onerror = () => { currentPromptAudio = null; resolve(); };
-    a.play().catch(() => resolve());
+    a.onerror = (e) => {
+      console.warn('[hir/call] prompt failed:', name, e?.message || e);
+      currentPromptAudio = null; resolve();
+    };
+    a.play().catch(err => {
+      console.warn('[hir/call] play() rejected:', name, err?.message || err);
+      resolve();
+    });
   });
 
   preloadPrompts();
@@ -327,12 +333,31 @@
   });
 
   // ── Flow ───────────────────────────────────────────────────────────
+  // Unlock HTMLAudioElement for iOS/Safari — must run inside the
+  // user-gesture handler (DIAL click). Plays one cached prompt muted +
+  // immediately pauses, which gives every later .play() the green light.
+  const unlockAudioPlayback = async () => {
+    const els = Object.values(PROMPT_CACHE);
+    if (!els.length) return;
+    const probe = els[0];
+    try {
+      probe.muted = true;
+      await probe.play();
+      probe.pause();
+      probe.currentTime = 0;
+      probe.muted = false;
+    } catch (e) { /* fail open — desktop works without this */ }
+  };
+
   const dialFlow = async () => {
     if (state !== STATE.IDLE) return;
     state = STATE.CONNECTING;
     setDial('[ DIALING... ]', false);
     setHangup(true);
     setKeypadEnabled(false);
+
+    // Unlock audio playback FIRST while we're still in the click handler.
+    await unlockAudioPlayback();
 
     // 1. Pickup
     setStatus([['meta', 'PICKING UP RECEIVER...']]);
@@ -535,8 +560,31 @@
     }
   };
 
+  // Hang-up handler. If the caller hangs up DURING body recording with
+  // a usable amount of audio captured (>3s), we treat the hangup as a
+  // "soft stop" — finalize the body blob, jump to review so the caller
+  // can listen + submit or discard. Hangup outside recording, or with
+  // <3s captured, is a true call-end (discard everything).
   const hangup = async () => {
     hangupClick();
+
+    // Mid-recording rescue: capture what we have before tearing down.
+    if (state === STATE.BODY_RECORDING && recorder && recorder.state === 'recording') {
+      const elapsedSec = timerStart ? (Date.now() - timerStart) / 1000 : 0;
+      bodyBlob = await stopRecording().catch(() => null);
+      stopTimer();
+      if (bodyBlob && bodyBlob.size > 0 && elapsedSec >= 3) {
+        if (currentPromptAudio) { try { currentPromptAudio.pause(); } catch(e){} }
+        setStatus([
+          ['ok', 'recording captured'],
+          ['prompt', `${Math.round(elapsedSec)}s recorded · jumped to review`],
+        ]);
+        await goReview();
+        return;
+      }
+      // <3s — too short to be useful, fall through to discard.
+    }
+
     if (recorder && recorder.state === 'recording') recorder.stop();
     if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = null; recorder = null;
@@ -548,6 +596,7 @@
     setHangup(false);
     setDial('[ DIAL ]', true);
     speechSynthesis.cancel();
+    if (currentPromptAudio) { try { currentPromptAudio.pause(); } catch(e){} currentPromptAudio = null; }
   };
 
   const handleError = (e) => {
