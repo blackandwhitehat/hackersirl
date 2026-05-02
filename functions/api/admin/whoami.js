@@ -9,7 +9,7 @@ import { isAdmin } from '../../_lib/auth.js';
 export async function onRequestGet({ request, env }) {
   const accessEmail = request.headers.get('cf-access-authenticated-user-email') || '';
   const adminEmail = env.ADMIN_EMAIL || '';
-  if (!isAdmin(request, env)) {
+  if (!(await isAdmin(request, env))) {
     // Debug: include every cf-* header so we can see exactly what
     // CF Access is (or isn't) forwarding. Stripped once auth chain
     // is verified end-to-end.

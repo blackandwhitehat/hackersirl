@@ -11,7 +11,7 @@ import { sbUpdate } from '../../_lib/supabase.js';
 import { isAdmin } from '../../_lib/auth.js';
 
 export async function onRequestPost({ request, env }) {
-  if (!isAdmin(request, env)) return new Response('forbidden', { status: 403 });
+  if (!(await isAdmin(request, env))) return new Response('forbidden', { status: 403 });
   const body = await request.json().catch(() => ({}));
   const { episode_id, title, description, episode_number, season, is_explicit } = body;
   if (!episode_id) return new Response('episode_id required', { status: 400 });

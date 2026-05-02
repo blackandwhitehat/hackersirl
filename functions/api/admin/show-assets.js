@@ -15,7 +15,7 @@ import { isAdmin } from '../../_lib/auth.js';
 const TYPES = ['intro', 'outro', 'bg_intro', 'bg_outro', 'phone_tones'];
 
 export async function onRequestGet({ request, env }) {
-  if (!isAdmin(request, env)) return new Response('forbidden', { status: 403 });
+  if (!(await isAdmin(request, env))) return new Response('forbidden', { status: 403 });
   // One row per type — latest active.
   const rows = await sbSelect(env, 'hir_show_assets', {
     active: 'eq.true',
@@ -31,7 +31,7 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPost({ request, env }) {
-  if (!isAdmin(request, env)) return new Response('forbidden', { status: 403 });
+  if (!(await isAdmin(request, env))) return new Response('forbidden', { status: 403 });
   const ct = request.headers.get('content-type') || '';
 
   let assetType, mode, text, voiceId, uploadedBuf, uploadedMime;

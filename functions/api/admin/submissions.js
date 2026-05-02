@@ -8,7 +8,7 @@ import { sbSelect } from '../../_lib/supabase.js';
 import { isAdmin } from '../../_lib/auth.js';
 
 export async function onRequestGet({ request, env }) {
-  if (!isAdmin(request, env)) return new Response('forbidden', { status: 403 });
+  if (!(await isAdmin(request, env))) return new Response('forbidden', { status: 403 });
   const url = new URL(request.url);
   const status = url.searchParams.get('status') || 'ready,processing,recording,publishing,published';
   const params = {
