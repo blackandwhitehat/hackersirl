@@ -195,6 +195,7 @@ async function load() {
     LIST.querySelectorAll('.btn-reject').forEach(b => b.addEventListener('click', onReject));
     LIST.querySelectorAll('.btn-update').forEach(b => b.addEventListener('click', onUpdate));
     LIST.querySelectorAll('.btn-unpublish').forEach(b => b.addEventListener('click', onUnpublish));
+    LIST.querySelectorAll('.btn-rerender').forEach(b => b.addEventListener('click', onRerender));
   } catch (e) {
     LIST.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
@@ -258,6 +259,7 @@ function renderSubmission(s) {
         <input type="number" class="ep-num" value="${esc(ep.episode_number ?? '')}">
         <div class="actions">
           <button class="btn btn-update">Save changes</button>
+          <button class="btn btn-rerender">Re-render</button>
           <button class="btn btn-unpublish">Unpublish (back to queue)</button>
           <button class="btn btn-reject">Reject (remove)</button>
         </div>
@@ -320,6 +322,44 @@ async function onReject(ev) {
   if (r.ok) { load(); } else { alert('Reject failed: ' + r.status); ev.target.disabled = false; }
 }
 
+async function onRerender(ev) {
+  const card = ev.target.closest('.sub');
+  const episode_id = card?.dataset.episodeId;
+  if (!episode_id) { alert('No episode id on this card.'); return; }
+  ev.target.disabled = true; ev.target.textContent = 'Queued...';
+  const r = await fetch('/api/admin/rerender', {
+    method: 'POST', credentials: 'include',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ episode_id }),
+  });
+  if (r.ok) {
+    ev.target.textContent = 'Queued ✓';
+    setTimeout(() => load(), 800);
+  } else {
+    alert('Re-render failed: ' + r.status);
+    ev.target.disabled = false; ev.target.textContent = 'Re-render';
+  }
+}
+
+async function onRerenderAll() {
+  if (!confirm('Mark every live episode for re-render? The cron picks them up in batches of 5 every 2 min.')) return;
+  const btn = document.getElementById('rerender-all-btn');
+  btn.disabled = true; btn.textContent = 'Queuing...';
+  const r = await fetch('/api/admin/rerender', {
+    method: 'POST', credentials: 'include',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({}),
+  });
+  if (r.ok) {
+    const { episodes_marked } = await r.json();
+    btn.textContent = `Queued ${episodes_marked} ✓`;
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Re-render catalog'; load(); }, 1500);
+  } else {
+    alert('Re-render failed: ' + r.status);
+    btn.disabled = false; btn.textContent = 'Re-render catalog';
+  }
+}
+
 async function onUnpublish(ev) {
   const card = ev.target.closest('.sub');
   const episode_id = card.dataset.episodeId;
@@ -340,3 +380,4 @@ FILTERS.forEach(b => b.addEventListener('click', () => {
   currentStatus = b.dataset.status;
   load();
 }));
+document.getElementById('rerender-all-btn')?.addEventListener('click', onRerenderAll);

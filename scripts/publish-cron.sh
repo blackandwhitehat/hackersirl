@@ -45,6 +45,61 @@ trap 'rm -rf "$LOCKDIR" "$WORKDIR"' EXIT
 
 echo "=== hackersirl-publish $(date -u +%FT%TZ) ==="
 
+# Resolve current show assets at run time
+INTRO_URL=$(fetch_asset intro)
+OUTRO_URL=$(fetch_asset outro)
+PHONE_URL=$(fetch_asset phone_tones)
+BG_INTRO_URL=$(fetch_asset bg_intro)
+BG_OUTRO_URL=$(fetch_asset bg_outro)
+
+# Hash a string with sha256 — used to fingerprint the inputs that
+# went into a rendered episode MP3. If the hash matches what's stored
+# on the row, the rendered MP3 is up to date; if not, the episode
+# needs to be re-rendered. Lets the cron skip unchanged work and
+# auto-pick up after any asset/text edit.
+sha() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
+
+# Compose the canonical input string for an episode. Order matters
+# (changing the order would invalidate every existing hash).
+episode_inputs() {
+  local title="$1" desc="$2" src="$3" anon="$4" handle="$5"
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+    "${INTRO_URL:-}" "${OUTRO_URL:-}" "${BG_INTRO_URL:-}" "${BG_OUTRO_URL:-}" "${PHONE_URL:-}" \
+    "${src:-}" "${handle:-}" "${anon:-false}" "${title:-}" "${desc:-}"
+}
+
+# Stale-check pass: walk every live episode, compute its current input
+# hash from the active assets + DB metadata, and compare to the hash
+# stored at last render. Mismatch = inputs changed since render = flip
+# back to pending so the loop below picks it up. Live MP3 stays served
+# at its existing audio_url until the new render lands.
+echo "scanning for stale renders..."
+LIVE=$(curl -s "${SUPABASE_URL}/rest/v1/hir_episodes?processing_state=eq.live&select=id,submission_id,title,description,source_audio_url,input_hash" \
+  -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
+STALE=0
+echo "$LIVE" | jq -c '.[]' 2>/dev/null | while read -r erow; do
+  EID=$(echo "$erow" | jq -r .id)
+  STORED=$(echo "$erow" | jq -r '.input_hash // empty')
+  ETITLE=$(echo "$erow" | jq -r '.title // ""')
+  EDESC=$(echo "$erow" | jq -r '.description // ""')
+  ESRC=$(echo "$erow" | jq -r '.source_audio_url // ""')
+  ESID=$(echo "$erow" | jq -r '.submission_id // ""')
+  [ -z "$ESID" ] && continue
+  ESUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${ESID}&select=handle_audio_url,handle_presented_url,anon" \
+    -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -c '.[0] // {}')
+  EANON=$(echo "$ESUB" | jq -r '.anon // false')
+  EHANDLE=$(echo "$ESUB" | jq -r '.handle_presented_url // ""')
+  [ -z "$EHANDLE" ] && [ "$EANON" != "true" ] && EHANDLE=$(echo "$ESUB" | jq -r '.handle_audio_url // ""')
+  CURRENT=$(sha "$(episode_inputs "$ETITLE" "$EDESC" "$ESRC" "$EANON" "$EHANDLE")")
+  if [ "$STORED" != "$CURRENT" ]; then
+    echo "  stale $EID (hash $STORED → $CURRENT)"
+    curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_episodes?id=eq.${EID}" \
+      -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" \
+      -H "content-type: application/json" -H "prefer: return=minimal" \
+      -d '{"processing_state":"pending"}' > /dev/null
+  fi
+done
+
 ROWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_episodes?processing_state=eq.pending&select=id,submission_id,title,description,episode_number,season,guid,source_audio_url&order=created_at.asc&limit=5" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
 COUNT=$(echo "$ROWS" | jq 'length' 2>/dev/null || echo 0)
@@ -57,13 +112,6 @@ PCOUNT=$(echo "$PREVIEWS" | jq 'length' 2>/dev/null || echo 0)
 
 echo "queue: $COUNT publish · $PCOUNT previews"
 [ "$COUNT" = "0" ] && [ "$PCOUNT" = "0" ] && exit 0
-
-# Resolve current show assets at run time
-INTRO_URL=$(fetch_asset intro)
-OUTRO_URL=$(fetch_asset outro)
-PHONE_URL=$(fetch_asset phone_tones)
-BG_INTRO_URL=$(fetch_asset bg_intro)
-BG_OUTRO_URL=$(fetch_asset bg_outro)
 
 INTRO_LOCAL="$WORKDIR/intro.mp3"
 OUTRO_LOCAL="$WORKDIR/outro.mp3"
@@ -236,15 +284,21 @@ echo "$ROWS" | jq -c '.[]' | while read -r row; do
   fi
   PUB_URL="${SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/${EP_KEY}"
 
-  # Patch the episode row with final audio + flip state
-  PATCH=$(jq -nc --arg u "$PUB_URL" --argjson s "$SIZE" --argjson d "$DUR" \
-    '{audio_url:$u, audio_size_bytes:$s, audio_duration_seconds:$d, audio_mime_type:"audio/mpeg", processing_state:"live", published_at:(now|todate)}')
+  # Compute the input hash for THIS render so the next stale-check
+  # pass can compare and skip when nothing's changed.
+  HASH=$(sha "$(episode_inputs "$TITLE" "$DESC" "$SRC" "$ANON" "$HANDLE_URL")")
+
+  # Patch the episode row with final audio + flip state. published_at
+  # is preserved on re-renders by only setting it on first publish
+  # (when the row was previously not 'live').
+  PATCH=$(jq -nc --arg u "$PUB_URL" --argjson s "$SIZE" --argjson d "$DUR" --arg h "$HASH" \
+    '{audio_url:$u, audio_size_bytes:$s, audio_duration_seconds:$d, audio_mime_type:"audio/mpeg", processing_state:"live", input_hash:$h, published_at:(now|todate)}')
   curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_episodes?id=eq.${ID}" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" \
     -H "content-type: application/json" -H "prefer: return=minimal" \
     -d "$PATCH" > /dev/null
 
-  # Submission flips to 'published'
+  # Submission flips to 'published' (idempotent — re-renders no-op this).
   curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${SUB_ID}" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" \
     -H "content-type: application/json" -H "prefer: return=minimal" \
