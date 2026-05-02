@@ -35,11 +35,13 @@ export async function onRequestPost({ request, env, waitUntil }) {
   if (sub && sub.body_audio_url && env.ELEVENLABS_API_KEY) {
     waitUntil(processAnon(env, sub.id, sub.body_audio_url, sub.anon_voice_id || 'operator'));
   }
-  // Hold music + recheck loop. Twilio's <Play loop> repeats the file
-  // and the Redirect kicks back to anon-process-poll which decides
-  // whether to keep waiting or play the result.
+  // Play hold music ONCE then bounce to anon-process-poll. The poll
+  // either plays the swapped audio (if ready) or restarts this loop.
+  // ❌ Don't use loop="0" — that's INFINITE in TwiML and Redirect
+  // becomes unreachable. Bug repro: caller stuck on hold music forever
+  // even though the swap completed in the background.
   let xml = '<Say voice="Polly.Joanna">Working on the scrambled version. Please hold.</Say>';
-  xml += `<Play loop="0">${env.HOLD_MUSIC_URL || `${env.SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/hold-music.mp3`}</Play>`;
+  xml += `<Play>${env.HOLD_MUSIC_URL || `${env.SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/hold-music.mp3`}</Play>`;
   xml += `<Redirect method="POST">/api/twilio/anon-process-poll</Redirect>`;
   return twimlResponse(xml);
 }
