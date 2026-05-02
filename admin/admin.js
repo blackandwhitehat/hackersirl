@@ -89,7 +89,7 @@ async function loadShowAssets() {
             <strong style="color:#00ff88">${cfg.label}</strong>
             <span style="color:#999;font-size:0.85rem">${cfg.hint}</span>
           </div>
-          ${a ? `<audio controls preload="none" src="${audioSrc(a.audio_url)}" style="width:100%;margin-top:0.4rem"></audio>` :
+          ${a ? `<audio controls preload="metadata" src="${audioSrc(a.audio_url)}" style="width:100%;margin-top:0.4rem"></audio>` :
                  '<div style="color:#888;font-size:0.85rem;margin-top:0.4rem">(none configured)</div>'}
           ${cfg.tts ? `
             <div class="tts-form" style="margin-top:0.6rem;display:flex;flex-direction:column;gap:0.4rem">
@@ -218,9 +218,9 @@ function renderSubmission(s) {
           </div>
         </div>
       </div>
-      ${s.handle_audio_url ? `<div class="audio-row"><label>Handle</label><audio controls preload="none" src="${audioSrc(s.handle_audio_url)}"></audio></div>` : ''}
-      ${bodyAudio ? `<div class="audio-row"><label>Body${isAnon && s.body_audio_anon_url ? ' (anonymized)' : ''}</label><audio controls preload="none" src="${audioSrc(bodyAudio)}"></audio></div>` : '<div class="sub-meta">No body audio yet.</div>'}
-      ${isAnon && s.body_audio_url && s.body_audio_anon_url ? `<details><summary>Original audio (anon caller)</summary><audio controls preload="none" src="${audioSrc(s.body_audio_url)}"></audio></details>` : ''}
+      ${s.handle_audio_url ? `<div class="audio-row"><label>Handle</label><audio controls preload="metadata" src="${audioSrc(s.handle_audio_url)}"></audio></div>` : ''}
+      ${bodyAudio ? `<div class="audio-row"><label>Body${isAnon && s.body_audio_anon_url ? ' (anonymized)' : ''}</label><audio controls preload="metadata" src="${audioSrc(bodyAudio)}"></audio></div>` : '<div class="sub-meta">No body audio yet.</div>'}
+      ${isAnon && s.body_audio_url && s.body_audio_anon_url ? `<details><summary>Original audio (anon caller)</summary><audio controls preload="metadata" src="${audioSrc(s.body_audio_url)}"></audio></details>` : ''}
       <details>
         <summary>Transcript</summary>
         <div class="transcript ${s.transcript ? '' : 'empty-tr'}">${esc(s.transcript || 'No transcript yet.')}</div>
@@ -228,7 +228,7 @@ function renderSubmission(s) {
       ${s.preview_audio_url ? `
       <div class="audio-row" style="border:1px dashed #00ff88;padding:0.6rem;border-radius:6px;margin-top:0.6rem">
         <label>Final-mix preview (intro + handle + body + outro · ~${fmtDur(s.preview_duration_seconds)})</label>
-        <audio controls preload="none" src="${audioSrc(s.preview_audio_url)}"></audio>
+        <audio controls preload="metadata" src="${audioSrc(s.preview_audio_url)}"></audio>
         <div style="margin-top:0.3rem"><a href="${safeUrl(s.preview_audio_url)}" download style="color:#00ff88">download mp3</a></div>
       </div>` : (s.body_audio_url && s.status !== 'recording' ? '<div class="sub-meta">Final-mix preview rendering... refresh in ~2 min</div>' : '')}
       ${isPublishable ? `
@@ -249,7 +249,7 @@ function renderSubmission(s) {
       ${isPublished ? `
       <div class="draft" style="border-top:1px solid #00ff88;margin-top:0.6rem;padding-top:0.6rem">
         <div style="font-weight:bold;color:#00ff88;margin-bottom:0.3rem">Published episode (editable)</div>
-        ${ep.audio_url ? `<div class="audio-row"><label>Final episode</label><audio controls preload="none" src="${audioSrc(ep.audio_url)}"></audio><div><a href="${safeUrl(ep.audio_url)}" download style="color:#00ff88">download mp3</a></div></div>` : ''}
+        ${ep.audio_url ? `<div class="audio-row"><label>Final episode</label><audio controls preload="metadata" src="${audioSrc(ep.audio_url)}"></audio><div><a href="${safeUrl(ep.audio_url)}" download style="color:#00ff88">download mp3</a></div></div>` : ''}
         <label>Title</label>
         <input type="text" class="ep-title" value="${esc(ep.title || '')}">
         <label>Description</label>
