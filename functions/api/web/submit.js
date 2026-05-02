@@ -47,6 +47,38 @@ export async function onRequestPost({ request, env, waitUntil }) {
     });
   }
 
+  // Cloudflare Turnstile verification — gates the submit endpoint
+  // against drive-by spam. Browser solves an invisible challenge and
+  // hands us the token; we exchange it server-side with CF's siteverify
+  // endpoint. If TURNSTILE_SECRET isn't configured, the check is
+  // skipped (dev / pre-rollout fallback) and a console warning logs.
+  if (env.TURNSTILE_SECRET) {
+    const tsTok = form.get('cf_turnstile_token');
+    if (!tsTok) {
+      return new Response(JSON.stringify({ error: 'turnstile token required' }), {
+        status: 401, headers: { 'content-type': 'application/json' },
+      });
+    }
+    const ip = request.headers.get('cf-connecting-ip') || '';
+    const verifyResp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        secret: env.TURNSTILE_SECRET,
+        response: tsTok.toString(),
+        ...(ip ? { remoteip: ip } : {}),
+      }),
+    });
+    const verify = await verifyResp.json().catch(() => ({}));
+    if (!verify.success) {
+      return new Response(JSON.stringify({ error: 'turnstile failed', codes: verify['error-codes'] || [] }), {
+        status: 401, headers: { 'content-type': 'application/json' },
+      });
+    }
+  } else {
+    console.warn('TURNSTILE_SECRET not set — submit endpoint is unprotected');
+  }
+
   const bodyFile = form.get('body_audio');
   const handleFile = form.get('handle_audio');
   const anon = form.get('anon') === '1';

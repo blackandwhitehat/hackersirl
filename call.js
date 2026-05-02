@@ -389,18 +389,37 @@
     ]);
   };
 
+  // Turnstile token holder — set by the cf-turnstile callback below.
+  let turnstileToken = null;
+  window.onTurnstile = (token) => { turnstileToken = token; };
+
+  const getTurnstileToken = () => new Promise((resolve) => {
+    // Already cached from auto-execute on page load (managed mode)?
+    if (turnstileToken) return resolve(turnstileToken);
+    // Trigger an explicit execute (invisible challenge runs invisibly).
+    if (window.turnstile) {
+      window.turnstile.execute('#ts-widget', { callback: (t) => { turnstileToken = t; resolve(t); } });
+      // Safety timeout — if nothing arrives, resolve null and let server reject.
+      setTimeout(() => resolve(turnstileToken), 8000);
+    } else {
+      resolve(null);
+    }
+  });
+
   const submit = async () => {
     if (!bodyBlob) return errorBeep();
     state = STATE.SUBMITTING;
     setKeypadEnabled(false);
     setHangup(false);
-    setStatus([['meta', 'UPLOADING TO TOWER...'], ['prompt', 'do not close this window']]);
+    setStatus([['meta', 'CHALLENGE / UPLOADING...'], ['prompt', 'do not close this window']]);
     try {
+      const tsTok = await getTurnstileToken();
       const fd = new FormData();
       if (handleBlob) fd.append('handle_audio', handleBlob, 'handle.webm');
       fd.append('body_audio', bodyBlob, 'body.webm');
       fd.append('anon', anon ? '1' : '0');
       fd.append('source', 'web');
+      if (tsTok) fd.append('cf_turnstile_token', tsTok);
       const r = await fetch('/api/web/submit', { method: 'POST', body: fd });
       if (!r.ok) throw new Error(`upload failed ${r.status}`);
       const data = await r.json().catch(() => ({}));
