@@ -48,55 +48,68 @@ WORKDIR=$(mktemp -d /tmp/hir-process.XXXXXX)
 
 echo "=== hackersirl-process $(date -u +%FT%TZ) ==="
 
-ROWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&transcript=is.null&select=id,anon,anon_voice_id,body_audio_url,body_audio_anon_url,handle&order=created_at.asc&limit=10" \
+# Pick up any submission that's missing transcript OR the newer
+# derived fields (handle_intro_url, show_notes). Rows that already
+# have a transcript skip the mlx_whisper step but still get the
+# Claude pass + presenter-intro TTS.
+ROWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=in.(ready,published)&or=(transcript.is.null,handle_intro_url.is.null,show_notes.is.null)&select=id,anon,anon_voice_id,body_audio_url,body_audio_anon_url,handle,transcript&order=created_at.asc&limit=10" \
   -H "apikey: ${SUPABASE_KEY}" -H "authorization: Bearer ${SUPABASE_KEY}")
 
-COUNT=$(echo "$ROWS" | jq 'length' 2>/dev/null || echo 0)
+COUNT=$(jq 'length' <<<"$ROWS" 2>/dev/null) || COUNT=0
 echo "queue: $COUNT"
 [ "$COUNT" = "0" ] && exit 0
 
 processed=0
-echo "$ROWS" | jq -c '.[]' | while read -r row; do
-  ID=$(echo "$row" | jq -r .id)
-  ANON=$(echo "$row" | jq -r .anon)
-  ANON_VOICE=$(echo "$row" | jq -r '.anon_voice_id // "operator"')
-  ANON_URL=$(echo "$row" | jq -r '.body_audio_anon_url // empty')
-  BODY_URL=$(echo "$row" | jq -r '.body_audio_url // empty')
-  HANDLE=$(echo "$row" | jq -r '.handle // ""')
-
-  if [ "$ANON" = "true" ] && [ -n "$ANON_URL" ]; then
-    AUDIO_URL="$ANON_URL"
-  elif [ -n "$BODY_URL" ]; then
-    AUDIO_URL="$BODY_URL"
-  else
-    echo "  $ID: no audio url, skipping"
-    continue
-  fi
-
-  MP3="$WORKDIR/$ID.mp3"
-  echo "  $ID: download $AUDIO_URL"
-  if ! curl -sLfo "$MP3" "$AUDIO_URL" || [ ! -s "$MP3" ]; then
-    echo "  $ID: download failed"
-    continue
-  fi
-
-  echo "  $ID: transcribe ($(stat -f%z "$MP3" 2>/dev/null) bytes)"
-  if ! "$MLX_WHISPER" "$MP3" \
-      --model "$WHISPER_MODEL" \
-      --output-dir "$WORKDIR" \
-      --output-name "$ID" \
-      --output-format txt \
-      --language en \
-      --verbose False > "$WORKDIR/$ID.whisper.log" 2>&1; then
-    echo "  $ID: whisper failed (see $WORKDIR/$ID.whisper.log)"
-    tail -5 "$WORKDIR/$ID.whisper.log"
-    continue
-  fi
+jq -c '.[]' <<<"$ROWS" | while read -r row; do
+  ID=$(jq -r .id <<<"$row")
+  ANON=$(jq -r .anon <<<"$row")
+  ANON_VOICE=$(jq -r '.anon_voice_id // "operator"' <<<"$row")
+  ANON_URL=$(jq -r '.body_audio_anon_url // empty' <<<"$row")
+  BODY_URL=$(jq -r '.body_audio_url // empty' <<<"$row")
+  HANDLE=$(jq -r '.handle // ""' <<<"$row")
+  EXISTING_TRANSCRIPT=$(jq -r '.transcript // empty' <<<"$row")
 
   TXT="$WORKDIR/$ID.txt"
-  if [ ! -s "$TXT" ]; then
-    echo "  $ID: empty transcript, skipping"
-    continue
+
+  if [ -n "$EXISTING_TRANSCRIPT" ]; then
+    # Row already has transcript — skip the expensive whisper step,
+    # just write it to a temp file so the Claude pass below has it.
+    printf '%s' "$EXISTING_TRANSCRIPT" > "$TXT"
+    echo "  $ID: reusing existing transcript ($(stat -f%z "$TXT") bytes)"
+  else
+    if [ "$ANON" = "true" ] && [ -n "$ANON_URL" ]; then
+      AUDIO_URL="$ANON_URL"
+    elif [ -n "$BODY_URL" ]; then
+      AUDIO_URL="$BODY_URL"
+    else
+      echo "  $ID: no audio url, skipping"
+      continue
+    fi
+
+    MP3="$WORKDIR/$ID.mp3"
+    echo "  $ID: download $AUDIO_URL"
+    if ! curl -sLfo "$MP3" "$AUDIO_URL" || [ ! -s "$MP3" ]; then
+      echo "  $ID: download failed"
+      continue
+    fi
+
+    echo "  $ID: transcribe ($(stat -f%z "$MP3" 2>/dev/null) bytes)"
+    if ! "$MLX_WHISPER" "$MP3" \
+        --model "$WHISPER_MODEL" \
+        --output-dir "$WORKDIR" \
+        --output-name "$ID" \
+        --output-format txt \
+        --language en \
+        --verbose False > "$WORKDIR/$ID.whisper.log" 2>&1; then
+      echo "  $ID: whisper failed (see $WORKDIR/$ID.whisper.log)"
+      tail -5 "$WORKDIR/$ID.whisper.log"
+      continue
+    fi
+
+    if [ ! -s "$TXT" ]; then
+      echo "  $ID: empty transcript, skipping"
+      continue
+    fi
   fi
 
   TRANSCRIPT_PREVIEW=$(head -c 120 "$TXT")
@@ -133,14 +146,14 @@ $(head -c 6000 "$TXT")
 EOF
 )
 
-  DRAFT_RAW=$(echo "$PROMPT" | claude -p --output-format json --max-turns 1 2>/dev/null || true)
-  DRAFT_TEXT=$(echo "$DRAFT_RAW" | jq -r '.result // empty' 2>/dev/null)
+  DRAFT_RAW=$(claude -p --output-format json --max-turns 1 <<<"$PROMPT" 2>/dev/null || true)
+  DRAFT_TEXT=$(jq -r '.result // empty' <<<"$DRAFT_RAW" 2>/dev/null)
   # Claude sometimes wraps in code fences — pull the JSON object out.
-  DRAFT_JSON=$(echo "$DRAFT_TEXT" | sed -n '/{/,/}$/p' | tr -d '\n')
-  TITLE=$(echo "$DRAFT_JSON"      | jq -r '.title // empty'        2>/dev/null)
-  DESC=$(echo  "$DRAFT_JSON"      | jq -r '.description // empty'  2>/dev/null)
-  INTRO_LINE=$(echo "$DRAFT_JSON" | jq -r '.intro_line // empty'   2>/dev/null)
-  NOTES_JSON=$(echo "$DRAFT_JSON" | jq -c '{shoutouts:(.shoutouts//[]), urls:(.urls//[]), emails:(.emails//[])}' 2>/dev/null || echo '{}')
+  DRAFT_JSON=$(printf '%s' "$DRAFT_TEXT" | sed -n '/{/,/}$/p' | tr -d '\n')
+  TITLE=$(jq -r '.title // empty'                                       <<<"$DRAFT_JSON" 2>/dev/null)
+  DESC=$(jq -r '.description // empty'                                  <<<"$DRAFT_JSON" 2>/dev/null)
+  INTRO_LINE=$(jq -r '.intro_line // empty'                             <<<"$DRAFT_JSON" 2>/dev/null)
+  NOTES_JSON=$(jq -c '{shoutouts:(.shoutouts//[]), urls:(.urls//[]), emails:(.emails//[])}' <<<"$DRAFT_JSON" 2>/dev/null || printf '%s' '{}')
   echo "  $ID: draft title=\"$TITLE\""
   echo "  $ID: intro_line=\"$INTRO_LINE\""
   echo "  $ID: show_notes=$NOTES_JSON"

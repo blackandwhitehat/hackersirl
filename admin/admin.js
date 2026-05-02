@@ -242,6 +242,7 @@ function renderSubmission(s) {
         <input type="number" class="ep-num" placeholder="e.g. 12">
         <div class="actions">
           <button class="btn btn-publish">Publish to feed</button>
+          <button class="btn btn-rerender">Re-render preview</button>
           <button class="btn btn-reject">Reject</button>
         </div>
       </div>
@@ -325,12 +326,12 @@ async function onReject(ev) {
 async function onRerender(ev) {
   const card = ev.target.closest('.sub');
   const episode_id = card?.dataset.episodeId;
-  if (!episode_id) { alert('No episode id on this card.'); return; }
+  const submission_id = card?.dataset.id;
   ev.target.disabled = true; ev.target.textContent = 'Queued...';
   const r = await fetch('/api/admin/rerender', {
     method: 'POST', credentials: 'include',
     headers: { 'content-type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ episode_id }),
+    body: JSON.stringify({ episode_id, submission_id }),
   });
   if (r.ok) {
     ev.target.textContent = 'Queued ✓';

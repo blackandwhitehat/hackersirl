@@ -84,23 +84,23 @@ echo "scanning for stale renders..."
 LIVE=$(curl -s "${SUPABASE_URL}/rest/v1/hir_episodes?processing_state=eq.live&select=id,submission_id,title,description,source_audio_url,input_hash" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
 STALE=0
-echo "$LIVE" | jq -c '.[]' 2>/dev/null | while read -r erow; do
-  EID=$(echo "$erow" | jq -r .id)
-  STORED=$(echo "$erow" | jq -r '.input_hash // empty')
-  ETITLE=$(echo "$erow" | jq -r '.title // ""')
-  EDESC=$(echo "$erow" | jq -r '.description // ""')
-  ESRC=$(echo "$erow" | jq -r '.source_audio_url // ""')
-  ESID=$(echo "$erow" | jq -r '.submission_id // ""')
+jq -c '.[]' <<<"$LIVE" 2>/dev/null | while read -r erow; do
+  EID=$(jq -r .id <<<"$erow")
+  STORED=$(jq -r '.input_hash // empty' <<<"$erow")
+  ETITLE=$(jq -r '.title // ""' <<<"$erow")
+  EDESC=$(jq -r '.description // ""' <<<"$erow")
+  ESRC=$(jq -r '.source_audio_url // ""' <<<"$erow")
+  ESID=$(jq -r '.submission_id // ""' <<<"$erow")
   [ -z "$ESID" ] && continue
   ESUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${ESID}&select=handle_audio_url,handle_presented_url,handle_intro_url,anon" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -c '.[0] // {}')
-  EANON=$(echo "$ESUB" | jq -r '.anon // false')
-  EHANDLE=$(echo "$ESUB" | jq -r '.handle_intro_url // ""')
-  [ -z "$EHANDLE" ] && EHANDLE=$(echo "$ESUB" | jq -r '.handle_presented_url // ""')
-  [ -z "$EHANDLE" ] && [ "$EANON" != "true" ] && EHANDLE=$(echo "$ESUB" | jq -r '.handle_audio_url // ""')
+  EANON=$(jq -r '.anon // false' <<<"$ESUB")
+  EHANDLE=$(jq -r '.handle_intro_url // ""' <<<"$ESUB")
+  [ -z "$EHANDLE" ] && EHANDLE=$(jq -r '.handle_presented_url // ""' <<<"$ESUB")
+  [ -z "$EHANDLE" ] && [ "$EANON" != "true" ] && EHANDLE=$(jq -r '.handle_audio_url // ""' <<<"$ESUB")
   CURRENT=$(sha "$(episode_inputs "$ETITLE" "$EDESC" "$ESRC" "$EANON" "$EHANDLE")")
   if [ "$STORED" != "$CURRENT" ]; then
-    echo "  stale $EID (hash $STORED → $CURRENT)"
+    echo "  stale episode $EID (hash $STORED → $CURRENT)"
     curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_episodes?id=eq.${EID}" \
       -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" \
       -H "content-type: application/json" -H "prefer: return=minimal" \
@@ -108,15 +108,42 @@ echo "$LIVE" | jq -c '.[]' 2>/dev/null | while read -r erow; do
   fi
 done
 
+# Same hash check for ready-state submission previews. Preview render
+# only triggers when preview_audio_url IS NULL, so we null it on stale
+# rows to force a re-render. preview_input_hash stored separately.
+PREVIEW_LIVE=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=not.is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon,preview_input_hash" \
+  -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
+jq -c '.[]' <<<"$PREVIEW_LIVE" 2>/dev/null | while read -r prow; do
+  PID=$(jq -r .id <<<"$prow")
+  PSTORED=$(jq -r '.preview_input_hash // empty' <<<"$prow")
+  PHTXT=$(jq -r '.handle // ""' <<<"$prow")
+  PANON=$(jq -r '.anon // false' <<<"$prow")
+  PBODY_RAW=$(jq -r '.body_audio_url // ""' <<<"$prow")
+  PBODY_ANON=$(jq -r '.body_audio_anon_url // ""' <<<"$prow")
+  PSRC="$PBODY_RAW"
+  [ "$PANON" = "true" ] && [ -n "$PBODY_ANON" ] && PSRC="$PBODY_ANON"
+  PHI=$(jq -r '.handle_intro_url // ""' <<<"$prow")
+  [ -z "$PHI" ] && PHI=$(jq -r '.handle_presented_url // ""' <<<"$prow")
+  [ -z "$PHI" ] && [ "$PANON" != "true" ] && PHI=$(jq -r '.handle_audio_url // ""' <<<"$prow")
+  PCURRENT=$(sha "$(episode_inputs "PREVIEW: ${PHTXT:-untitled}" "Preview render — not yet published." "$PSRC" "$PANON" "$PHI")")
+  if [ "$PSTORED" != "$PCURRENT" ]; then
+    echo "  stale preview $PID (hash $PSTORED → $PCURRENT)"
+    curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${PID}" \
+      -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" \
+      -H "content-type: application/json" -H "prefer: return=minimal" \
+      -d '{"preview_audio_url":null}' > /dev/null
+  fi
+done
+
 ROWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_episodes?processing_state=eq.pending&select=id,submission_id,title,description,episode_number,season,guid,source_audio_url&order=created_at.asc&limit=5" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
-COUNT=$(echo "$ROWS" | jq 'length' 2>/dev/null || echo 0)
+COUNT=$(jq 'length' <<<"$ROWS" 2>/dev/null) || COUNT=0
 
 # Also pull submissions that don't have a preview rendered yet so admin
 # can hear the final mix before clicking Publish.
 PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
-PCOUNT=$(echo "$PREVIEWS" | jq 'length' 2>/dev/null || echo 0)
+PCOUNT=$(jq 'length' <<<"$PREVIEWS" 2>/dev/null) || PCOUNT=0
 
 echo "queue: $COUNT publish · $PCOUNT previews"
 [ "$COUNT" = "0" ] && [ "$PCOUNT" = "0" ] && exit 0
@@ -240,15 +267,15 @@ render_episode() {
 }
 
 # ── publish queue ──
-echo "$ROWS" | jq -c '.[]' | while read -r row; do
-  ID=$(echo "$row" | jq -r .id)
-  GUID=$(echo "$row" | jq -r .guid)
-  TITLE=$(echo "$row" | jq -r .title)
-  DESC=$(echo "$row" | jq -r .description)
-  EP_NUM=$(echo "$row" | jq -r '.episode_number // ""')
-  SEASON=$(echo "$row" | jq -r '.season // ""')
-  SUB_ID=$(echo "$row" | jq -r .submission_id)
-  SRC=$(echo "$row" | jq -r '.source_audio_url // empty')
+jq -c '.[]' <<<"$ROWS" | while read -r row; do
+  ID=$(jq -r .id <<<"$row")
+  GUID=$(jq -r .guid <<<"$row")
+  TITLE=$(jq -r .title <<<"$row")
+  DESC=$(jq -r .description <<<"$row")
+  EP_NUM=$(jq -r '.episode_number // ""' <<<"$row")
+  SEASON=$(jq -r '.season // ""' <<<"$row")
+  SUB_ID=$(jq -r .submission_id <<<"$row")
+  SRC=$(jq -r '.source_audio_url // empty' <<<"$row")
 
   if [ -z "$SRC" ]; then
     echo "  $ID: missing source_audio_url, marking failed"
@@ -266,11 +293,11 @@ echo "$ROWS" | jq -c '.[]' | while read -r row; do
   #   3. handle_audio_url   — caller's raw recording (NEVER for anon)
   SUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${SUB_ID}&select=handle_audio_url,handle_presented_url,handle_intro_url,anon,show_notes" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -c '.[0] // {}')
-  HANDLE_INTRO=$(echo "$SUB" | jq -r '.handle_intro_url // empty')
-  HANDLE_PRESENTED=$(echo "$SUB" | jq -r '.handle_presented_url // empty')
-  HANDLE_RAW=$(echo "$SUB" | jq -r '.handle_audio_url // empty')
-  ANON=$(echo "$SUB" | jq -r '.anon // false')
-  SHOW_NOTES=$(echo "$SUB" | jq -c '.show_notes // {}')
+  HANDLE_INTRO=$(jq -r '.handle_intro_url // empty' <<<"$SUB")
+  HANDLE_PRESENTED=$(jq -r '.handle_presented_url // empty' <<<"$SUB")
+  HANDLE_RAW=$(jq -r '.handle_audio_url // empty' <<<"$SUB")
+  ANON=$(jq -r '.anon // false' <<<"$SUB")
+  SHOW_NOTES=$(jq -c '.show_notes // {}' <<<"$SUB")
   HANDLE_URL="$HANDLE_INTRO"
   [ -z "$HANDLE_URL" ] && HANDLE_URL="$HANDLE_PRESENTED"
   [ -z "$HANDLE_URL" ] && [ "$ANON" != "true" ] && HANDLE_URL="$HANDLE_RAW"
@@ -279,13 +306,13 @@ echo "$ROWS" | jq -c '.[]' | while read -r row; do
   # are non-empty. The cron writes this back to hir_episodes.description
   # so RSS subscribers see shoutouts/links/contact. Non-destructive: if
   # the row already has a manually-curated description we just append.
-  NOTES_BLOCK=$(echo "$SHOW_NOTES" | jq -r '
+  NOTES_BLOCK=$(jq -r '
     [
       ((.shoutouts // []) | if length > 0 then "Shoutouts: " + (join(", ")) else empty end),
       ((.urls      // []) | if length > 0 then "Links: "     + (join(" · ")) else empty end),
       ((.emails    // []) | if length > 0 then "Reach: "     + (join(", ")) else empty end)
     ] | map(select(. != null)) | join("\n")
-  ')
+  ' <<<"$SHOW_NOTES")
   if [ -n "$NOTES_BLOCK" ]; then
     DESC="${DESC}
 
@@ -349,15 +376,15 @@ done
 # ── preview queue (status='ready' rows that don't have a final-mix
 # preview yet — admin uses this to listen to / download what the
 # published episode will sound like before clicking Publish) ──
-echo "$PREVIEWS" | jq -c '.[]' | while read -r prow; do
-  PID=$(echo "$prow" | jq -r .id)
-  PHANDLE_INTRO=$(echo "$prow" | jq -r '.handle_intro_url // empty')
-  PHANDLE_PRESENTED=$(echo "$prow" | jq -r '.handle_presented_url // empty')
-  PHANDLE_RAW=$(echo "$prow" | jq -r '.handle_audio_url // empty')
-  PBODY_RAW=$(echo "$prow" | jq -r '.body_audio_url // empty')
-  PBODY_ANON=$(echo "$prow" | jq -r '.body_audio_anon_url // empty')
-  PANON=$(echo "$prow" | jq -r '.anon // false')
-  PHANDLE_TXT=$(echo "$prow" | jq -r '.handle // ""')
+jq -c '.[]' <<<"$PREVIEWS" | while read -r prow; do
+  PID=$(jq -r .id <<<"$prow")
+  PHANDLE_INTRO=$(jq -r '.handle_intro_url // empty' <<<"$prow")
+  PHANDLE_PRESENTED=$(jq -r '.handle_presented_url // empty' <<<"$prow")
+  PHANDLE_RAW=$(jq -r '.handle_audio_url // empty' <<<"$prow")
+  PBODY_RAW=$(jq -r '.body_audio_url // empty' <<<"$prow")
+  PBODY_ANON=$(jq -r '.body_audio_anon_url // empty' <<<"$prow")
+  PANON=$(jq -r '.anon // false' <<<"$prow")
+  PHANDLE_TXT=$(jq -r '.handle // ""' <<<"$prow")
 
   # Handle slot priority same as the publish path: full intro line,
   # then presenter handle, then raw (only for non-anon).
@@ -391,8 +418,11 @@ echo "$PREVIEWS" | jq -c '.[]' | while read -r prow; do
     echo "    preview upload failed HTTP $HTTP"; continue
   fi
   PUB="${SUPABASE_URL}/storage/v1/object/public/hackersirl-audio/${PKEY}"
-  PATCH=$(jq -nc --arg u "$PUB" --argjson s "$PSIZE" --argjson d "$PDUR" \
-    '{preview_audio_url:$u, preview_size_bytes:$s, preview_duration_seconds:$d}')
+  # Same hash composition the stale-check pass uses, so the next run
+  # of this cron correctly detects when a preview is up-to-date.
+  PHASH=$(sha "$(episode_inputs "PREVIEW: ${PHANDLE_TXT:-untitled}" "Preview render — not yet published." "$PSRC" "$PANON" "$PHANDLE")")
+  PATCH=$(jq -nc --arg u "$PUB" --argjson s "$PSIZE" --argjson d "$PDUR" --arg h "$PHASH" \
+    '{preview_audio_url:$u, preview_size_bytes:$s, preview_duration_seconds:$d, preview_input_hash:$h}')
   curl -s -X PATCH "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${PID}" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" \
     -H "content-type: application/json" -H "prefer: return=minimal" \
