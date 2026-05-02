@@ -34,21 +34,19 @@ export function timingSafeEqualBytes(a, b) {
 // Shared admin authorization gate. Every /api/admin/* handler should
 // call this exactly once at the top of the request.
 //
-// Two acceptable signals (any one passes):
-//   1. Cloudflare Access has authenticated the request and the email
-//      matches env.ADMIN_EMAIL (case-insensitive). Production path.
-//   2. An Authorization: Bearer <ADMIN_BEARER> header matches the
-//      env's ADMIN_BEARER value via constant-time compare. Back-channel
-//      for emergency use; should be rotated frequently.
+// Single acceptable signal: Cloudflare Access has authenticated the
+// request and the email matches env.ADMIN_EMAIL (case-insensitive).
+// CF Access is doing the JWT validation at the edge before we see
+// the request; the function only needs to assert the identity is
+// the configured admin.
+//
+// The previous bearer fallback (Authorization: Bearer <ADMIN_BEARER>)
+// was removed: an admin-only back-channel that lives in env vars and
+// localStorage is exactly the thing the public web should never have
+// to think about, and it was the largest XSS-takeover surface on
+// the page. CF Access OTP is the only path now.
 export function isAdmin(request, env) {
   const accessEmail = (request.headers.get('cf-access-authenticated-user-email') || '').toLowerCase();
   const adminEmail = (env.ADMIN_EMAIL || '').toLowerCase();
-  if (accessEmail && adminEmail && accessEmail === adminEmail) return true;
-
-  const auth = request.headers.get('authorization') || '';
-  if (env.ADMIN_BEARER && auth.startsWith('Bearer ')) {
-    const presented = auth.slice('Bearer '.length);
-    return timingSafeEqual(presented, env.ADMIN_BEARER);
-  }
-  return false;
+  return !!(accessEmail && adminEmail && accessEmail === adminEmail);
 }
