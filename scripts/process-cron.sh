@@ -69,6 +69,13 @@ jq -c '.[]' <<<"$ROWS" | while read -r row; do
   HANDLE=$(jq -r '.handle // ""' <<<"$row")
   EXISTING_TRANSCRIPT=$(jq -r '.transcript // empty' <<<"$row")
 
+  # Pull the caller's handle audio URL too — we transcribe it so the
+  # host's intro line can use what they actually said about themselves
+  # (their alias, role, location, whatever) instead of inferring purely
+  # from body context.
+  HANDLE_AUDIO_URL=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${ID}&select=handle_audio_url" \
+    -H "apikey: ${SUPABASE_KEY}" -H "authorization: Bearer ${SUPABASE_KEY}" | jq -r '.[0].handle_audio_url // empty')
+
   TXT="$WORKDIR/$ID.txt"
 
   if [ -n "$EXISTING_TRANSCRIPT" ]; then
@@ -115,6 +122,31 @@ jq -c '.[]' <<<"$ROWS" | while read -r row; do
   TRANSCRIPT_PREVIEW=$(head -c 120 "$TXT")
   echo "  $ID: transcript: $TRANSCRIPT_PREVIEW..."
 
+  # Transcribe the handle audio separately so the host's intro line
+  # can use what the caller actually said about themselves. Falls back
+  # to empty string if the handle wasn't recorded or whisper fails;
+  # the Claude prompt then leans on body context only.
+  HANDLE_TRANSCRIPT=""
+  if [ -n "$HANDLE_AUDIO_URL" ]; then
+    HMP3="$WORKDIR/${ID}-handle.mp3"
+    HTXT_OUT="$WORKDIR/${ID}-handle"
+    if curl -sLfo "$HMP3" "$HANDLE_AUDIO_URL" && [ -s "$HMP3" ]; then
+      if "$MLX_WHISPER" "$HMP3" \
+          --model "$WHISPER_MODEL" \
+          --output-dir "$WORKDIR" \
+          --output-name "${ID}-handle" \
+          --output-format txt \
+          --language en \
+          --verbose False > "$WORKDIR/${ID}.handle-whisper.log" 2>&1 \
+         && [ -s "$HTXT_OUT.txt" ]; then
+        HANDLE_TRANSCRIPT=$(cat "$HTXT_OUT.txt" | tr -d '\n' | head -c 500)
+        echo "  $ID: handle-text: $HANDLE_TRANSCRIPT"
+      else
+        echo "  $ID: handle whisper failed/empty"
+      fi
+    fi
+  fi
+
   # Single Claude pass that pulls everything we need from the transcript:
   # title, description, presenter intro line (so the show host can
   # introduce the caller by handle + how they described themselves),
@@ -132,16 +164,20 @@ Listen to this submission and produce a JSON object. Reply with ONLY the JSON, n
 {
   "title":         "under 70 chars, captures the heart of the story",
   "description":   "one short paragraph under 240 chars, what this episode is about",
-  "intro_line":    "the show host introducing this caller right after the intro music. Be specific and contextual based on what's in the transcript. Examples:\n  - With handle + self-description: 'Up next: Sparky, a SOC analyst at a mid-size bank. Here's their story.'\n  - With handle, no self-description: 'Up next: Sparky, calling in on the way to a celebration of life. Here's their story.' (use whatever they're DOING or the topic of their call as the descriptor)\n  - No handle but transcript has context: 'Up next, a caller running the network village at a hacker con. Here's their story.'\n  - No handle and transcript is too thin to describe: 'Up next, an unnamed caller. Here's their story.'\n  Never say 'anonymous' — say 'unnamed' if you must. One natural sentence, max ~30 words. The host says this — write it for the host's voice.",
-  "shoutouts":     ["names or handles of people the caller mentioned, credited, or thanked"],
-  "urls":          ["any URL the caller mentioned (full URL with scheme if given)"],
-  "emails":        ["any email address the caller mentioned"]
+  "intro_line":    "the show host introducing this caller right after the intro music. The HANDLE INTRODUCTION below is the caller's own short self-introduction (name, role, where they're from, whatever they chose to say) — use that as your primary source for who the caller is. Examples:\n  - Handle intro says 'Hey, I'm Sparky, SOC analyst out of Atlanta': 'Up next: Sparky, SOC analyst out of Atlanta. Here's their story.'\n  - Handle intro says 'This is Glitch': 'Up next: Glitch. Here's their story.'\n  - Handle intro is empty or unclear: fall back to body context (what they're doing or talking about) like 'Up next, a caller running the network village at a hacker con. Here's their story.'\n  - Nothing usable anywhere: 'Up next, an unnamed caller. Here's their story.'\n  Never say 'anonymous' — say 'unnamed' if you must. One natural sentence, max ~30 words. The host says this — write it for the host's voice.",
+  "shoutouts":     ["names or handles of people the caller mentioned in the BODY transcript, credited, or thanked"],
+  "urls":          ["any URL the caller mentioned in the BODY transcript (full URL with scheme if given)"],
+  "emails":        ["any email address the caller mentioned in the BODY transcript"]
 }
 
 Empty arrays are fine if nothing applies. Don't invent shoutouts/urls/emails — only include what's actually in the transcript.
 
-Caller handle: ${HANDLE:-(none provided)}
-Transcript:
+Caller handle (text field, may be blank): ${HANDLE:-(none provided)}
+
+Handle introduction (caller's recorded handle, transcribed):
+${HANDLE_TRANSCRIPT:-(none recorded)}
+
+Body transcript:
 $(head -c 6000 "$TXT")
 EOF
 )
