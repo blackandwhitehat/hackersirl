@@ -7,14 +7,24 @@
 import { isAdmin } from '../../_lib/auth.js';
 
 export async function onRequestGet({ request, env }) {
+  const accessEmail = request.headers.get('cf-access-authenticated-user-email') || '';
+  const adminEmail = env.ADMIN_EMAIL || '';
   if (!isAdmin(request, env)) {
-    return new Response(JSON.stringify({ admin: false }), {
+    // Debug: include what the function actually saw so we can tell
+    // whether CF Access is forwarding identity. The values are not
+    // secret (the user already knows their own email), and we strip
+    // this once the auth chain is verified end-to-end.
+    return new Response(JSON.stringify({
+      admin: false,
+      saw_email: accessEmail || null,
+      env_email_set: !!adminEmail,
+      match: accessEmail.toLowerCase() === adminEmail.toLowerCase(),
+    }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
     });
   }
-  const email = (request.headers.get('cf-access-authenticated-user-email') || '').toLowerCase();
-  return new Response(JSON.stringify({ admin: true, email }), {
+  return new Response(JSON.stringify({ admin: true, email: accessEmail.toLowerCase() }), {
     headers: { 'content-type': 'application/json' },
   });
 }

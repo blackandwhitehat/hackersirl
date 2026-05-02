@@ -27,6 +27,7 @@
 /admin/*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; media-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co; connect-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co https://hackersirl.cloudflareaccess.com https://bamboosec.cloudflareaccess.com https://cloudflareinsights.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
   X-Robots-Tag: noindex, nofollow
+  Cache-Control: no-store, max-age=0
 
 # RSS endpoint — no scripts at all.
 /feed.xml
