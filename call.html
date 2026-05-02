@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HACKERS IRL :: voicemail terminal</title>
+  <meta name="description" content="Browser voicemail line for Hackers IRL. Phone-emulator interface with DTMF tones. Talk for up to ten minutes.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📞</text></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #050510;
+      --panel: #0a0a14;
+      --border: #1a1a2e;
+      --green: #00ff88;
+      --green-dim: rgba(0,255,136,.15);
+      --green-glow: rgba(0,255,136,.45);
+      --cyan: #00e5ff;
+      --pink: #ff2d7b;
+      --orange: #ff8800;
+      --red: #ff3355;
+      --text: #c0c0d0;
+      --dim: #444460;
+      --mono: 'Share Tech Mono', 'VT323', 'Courier New', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: var(--bg); color: var(--green); font-family: var(--mono); min-height: 100vh; overflow-x: hidden; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+      padding: 20px 16px 60px;
+      background:
+        radial-gradient(ellipse at top, rgba(0,255,136,.05), transparent 60%),
+        radial-gradient(ellipse at bottom, rgba(255,45,123,.04), transparent 60%),
+        var(--bg);
+    }
+    /* CRT scanlines */
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 999;
+      background: repeating-linear-gradient(0deg, rgba(0,0,0,.0) 0, rgba(0,0,0,.0) 2px, rgba(0,0,0,.18) 3px, rgba(0,0,0,.18) 4px);
+    }
+    body::after {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 998;
+      background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,.4) 100%);
+    }
+
+    .terminal {
+      width: 100%; max-width: 540px;
+      background: var(--panel);
+      border: 2px solid var(--green);
+      border-radius: 8px;
+      box-shadow:
+        0 0 22px var(--green-dim),
+        inset 0 0 60px rgba(0,255,136,.04);
+      padding: 18px 20px 24px;
+      position: relative;
+    }
+
+    .term-header {
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px dashed var(--green-dim);
+      padding-bottom: 10px; margin-bottom: 14px;
+      font-size: 13px;
+    }
+    .term-title { letter-spacing: 2px; }
+    .term-title .blink { animation: blink 1s steps(2) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .status {
+      min-height: 96px;
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 10px 0;
+      white-space: pre-wrap;
+    }
+    .status .prompt { color: var(--green); }
+    .status .meta   { color: var(--cyan); }
+    .status .err    { color: var(--red); }
+    .status .ok     { color: var(--orange); }
+    .status .caret::after { content: '_'; animation: blink 1s steps(2) infinite; margin-left: 2px; }
+
+    .timer {
+      font-family: 'VT323', monospace;
+      font-size: 28px;
+      letter-spacing: 4px;
+      color: var(--cyan);
+      text-shadow: 0 0 8px var(--cyan);
+      text-align: center;
+      margin: 6px 0 14px;
+    }
+    .timer.recording { color: var(--red); text-shadow: 0 0 10px var(--red); }
+
+    .waveform {
+      width: 100%; height: 56px;
+      background: rgba(0,255,136,.04);
+      border: 1px solid var(--green-dim);
+      border-radius: 4px;
+      margin-bottom: 16px;
+      position: relative; overflow: hidden;
+    }
+    .wave-canvas { width: 100%; height: 100%; display: block; }
+
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .key {
+      background: var(--bg);
+      border: 1px solid var(--green-dim);
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 22px;
+      padding: 16px 0;
+      cursor: pointer;
+      border-radius: 6px;
+      letter-spacing: 1px;
+      transition: all 80ms;
+      text-shadow: 0 0 6px var(--green-glow);
+      position: relative;
+    }
+    .key .sub { display: block; font-size: 9px; color: var(--dim); letter-spacing: 2px; margin-top: 3px; }
+    .key:active, .key.active {
+      background: var(--green-dim);
+      border-color: var(--green);
+      box-shadow: 0 0 14px var(--green-glow), inset 0 0 16px rgba(0,255,136,.12);
+      transform: scale(0.97);
+    }
+    .key:disabled { opacity: 0.3; cursor: not-allowed; text-shadow: none; }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .btn {
+      background: var(--bg);
+      border: 1px solid var(--green);
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 14px;
+      padding: 14px 0;
+      cursor: pointer;
+      border-radius: 4px;
+      letter-spacing: 2px;
+      transition: all 80ms;
+      text-shadow: 0 0 6px var(--green-glow);
+    }
+    .btn:hover:not(:disabled) { background: var(--green-dim); }
+    .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .btn.danger { border-color: var(--red); color: var(--red); text-shadow: 0 0 6px var(--red); }
+    .btn.danger:hover:not(:disabled) { background: rgba(255,51,85,.15); }
+
+    .footer-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--green-dim);
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+    .footer-bar a { color: var(--cyan); text-decoration: none; }
+    .footer-bar a:hover { text-decoration: underline; }
+    /* easter egg */
+    .easter { color: var(--pink); font-size: 9px; margin-top: 4px; opacity: 0.5; }
+    @media (max-width: 420px) {
+      .terminal { padding: 14px 14px 20px; }
+      .key { font-size: 18px; padding: 14px 0; }
+      .timer { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="terminal" id="term">
+  <div class="term-header">
+    <div class="term-title"><span class="blink">●</span> HACKERS IRL <span style="color:var(--dim)">::</span> v0.2 <span style="color:var(--dim)">::</span> /call</div>
+    <div style="font-size:11px;color:var(--dim)">2600.4225</div>
+  </div>
+
+  <div class="status" id="status"><span class="prompt">> initializing terminal<span class="caret"></span></span></div>
+
+  <div class="timer" id="timer">00:00</div>
+
+  <div class="waveform"><canvas class="wave-canvas" id="wave"></canvas></div>
+
+  <div class="keypad" id="keypad">
+    <button class="key" data-k="1">1<span class="sub"></span></button>
+    <button class="key" data-k="2">2<span class="sub">ABC</span></button>
+    <button class="key" data-k="3">3<span class="sub">DEF</span></button>
+    <button class="key" data-k="4">4<span class="sub">GHI</span></button>
+    <button class="key" data-k="5">5<span class="sub">JKL</span></button>
+    <button class="key" data-k="6">6<span class="sub">MNO</span></button>
+    <button class="key" data-k="7">7<span class="sub">PQRS</span></button>
+    <button class="key" data-k="8">8<span class="sub">TUV</span></button>
+    <button class="key" data-k="9">9<span class="sub">WXYZ</span></button>
+    <button class="key" data-k="*">*</button>
+    <button class="key" data-k="0">0<span class="sub">+</span></button>
+    <button class="key" data-k="#">#</button>
+  </div>
+
+  <div class="controls">
+    <button class="btn" id="dial">[ DIAL ]</button>
+    <button class="btn danger" id="hangup" disabled>[ HANG UP ]</button>
+  </div>
+
+  <div class="footer-bar">
+    <span>or call <a href="tel:+19049154225">1-904-915-HACK</a></span>
+    <span><a href="/">back to hackersirl.com</a></span>
+  </div>
+  <div class="easter">/* it doesn't have to be perfect — 2600 was right */</div>
+</div>
+
+<script src="/call.js"></script>
+</body>
+</html>
