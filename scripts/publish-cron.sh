@@ -62,7 +62,7 @@ BG_OUTRO_URL=$(fetch_asset bg_outro)
 # mix logic itself (filter graph, fade timing, concat order, etc.)
 # invalidate every existing hash and trigger a one-time catalog re-
 # render. Bump it whenever the render pipeline changes.
-RENDER_VERSION="v2"
+RENDER_VERSION="v3"
 sha() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
 
 # Compose the canonical input string for an episode. Order matters
@@ -92,10 +92,11 @@ echo "$LIVE" | jq -c '.[]' 2>/dev/null | while read -r erow; do
   ESRC=$(echo "$erow" | jq -r '.source_audio_url // ""')
   ESID=$(echo "$erow" | jq -r '.submission_id // ""')
   [ -z "$ESID" ] && continue
-  ESUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${ESID}&select=handle_audio_url,handle_presented_url,anon" \
+  ESUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${ESID}&select=handle_audio_url,handle_presented_url,handle_intro_url,anon" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -c '.[0] // {}')
   EANON=$(echo "$ESUB" | jq -r '.anon // false')
-  EHANDLE=$(echo "$ESUB" | jq -r '.handle_presented_url // ""')
+  EHANDLE=$(echo "$ESUB" | jq -r '.handle_intro_url // ""')
+  [ -z "$EHANDLE" ] && EHANDLE=$(echo "$ESUB" | jq -r '.handle_presented_url // ""')
   [ -z "$EHANDLE" ] && [ "$EANON" != "true" ] && EHANDLE=$(echo "$ESUB" | jq -r '.handle_audio_url // ""')
   CURRENT=$(sha "$(episode_inputs "$ETITLE" "$EDESC" "$ESRC" "$EANON" "$EHANDLE")")
   if [ "$STORED" != "$CURRENT" ]; then
@@ -113,7 +114,7 @@ COUNT=$(echo "$ROWS" | jq 'length' 2>/dev/null || echo 0)
 
 # Also pull submissions that don't have a preview rendered yet so admin
 # can hear the final mix before clicking Publish.
-PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
+PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
 PCOUNT=$(echo "$PREVIEWS" | jq 'length' 2>/dev/null || echo 0)
 
@@ -258,16 +259,38 @@ echo "$ROWS" | jq -c '.[]' | while read -r row; do
     continue
   fi
 
-  # Pull submission to get handle URL + anon flag (source_audio_url
-  # already accounts for anon/non-anon body choice). Prefer the
-  # AI-presenter handle; for anon never fall back to raw.
-  SUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${SUB_ID}&select=handle_audio_url,handle_presented_url,anon" \
+  # Pull submission for handle URL choice + anon flag + show notes.
+  # Handle slot priority:
+  #   1. handle_intro_url   — host's full intro line ("Up next: X, a Y...")
+  #   2. handle_presented_url — host re-speaking just the handle
+  #   3. handle_audio_url   — caller's raw recording (NEVER for anon)
+  SUB=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?id=eq.${SUB_ID}&select=handle_audio_url,handle_presented_url,handle_intro_url,anon,show_notes" \
     -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY" | jq -c '.[0] // {}')
+  HANDLE_INTRO=$(echo "$SUB" | jq -r '.handle_intro_url // empty')
   HANDLE_PRESENTED=$(echo "$SUB" | jq -r '.handle_presented_url // empty')
   HANDLE_RAW=$(echo "$SUB" | jq -r '.handle_audio_url // empty')
   ANON=$(echo "$SUB" | jq -r '.anon // false')
-  HANDLE_URL="$HANDLE_PRESENTED"
+  SHOW_NOTES=$(echo "$SUB" | jq -c '.show_notes // {}')
+  HANDLE_URL="$HANDLE_INTRO"
+  [ -z "$HANDLE_URL" ] && HANDLE_URL="$HANDLE_PRESENTED"
   [ -z "$HANDLE_URL" ] && [ "$ANON" != "true" ] && HANDLE_URL="$HANDLE_RAW"
+
+  # Append show notes to the episode description if any of the lists
+  # are non-empty. The cron writes this back to hir_episodes.description
+  # so RSS subscribers see shoutouts/links/contact. Non-destructive: if
+  # the row already has a manually-curated description we just append.
+  NOTES_BLOCK=$(echo "$SHOW_NOTES" | jq -r '
+    [
+      ((.shoutouts // []) | if length > 0 then "Shoutouts: " + (join(", ")) else empty end),
+      ((.urls      // []) | if length > 0 then "Links: "     + (join(" · ")) else empty end),
+      ((.emails    // []) | if length > 0 then "Reach: "     + (join(", ")) else empty end)
+    ] | map(select(. != null)) | join("\n")
+  ')
+  if [ -n "$NOTES_BLOCK" ]; then
+    DESC="${DESC}
+
+${NOTES_BLOCK}"
+  fi
 
   echo "  $ID: \"$TITLE\""
   FINAL="$WORKDIR/${ID}-final.mp3"
@@ -328,6 +351,7 @@ done
 # published episode will sound like before clicking Publish) ──
 echo "$PREVIEWS" | jq -c '.[]' | while read -r prow; do
   PID=$(echo "$prow" | jq -r .id)
+  PHANDLE_INTRO=$(echo "$prow" | jq -r '.handle_intro_url // empty')
   PHANDLE_PRESENTED=$(echo "$prow" | jq -r '.handle_presented_url // empty')
   PHANDLE_RAW=$(echo "$prow" | jq -r '.handle_audio_url // empty')
   PBODY_RAW=$(echo "$prow" | jq -r '.body_audio_url // empty')
@@ -335,10 +359,10 @@ echo "$PREVIEWS" | jq -c '.[]' | while read -r prow; do
   PANON=$(echo "$prow" | jq -r '.anon // false')
   PHANDLE_TXT=$(echo "$prow" | jq -r '.handle // ""')
 
-  # Handle: prefer AI presenter version. For anon, never fall back to
-  # raw — that would leak the caller's voice. For non-anon, raw is OK
-  # if presenter pass hasn't run yet.
-  PHANDLE="$PHANDLE_PRESENTED"
+  # Handle slot priority same as the publish path: full intro line,
+  # then presenter handle, then raw (only for non-anon).
+  PHANDLE="$PHANDLE_INTRO"
+  [ -z "$PHANDLE" ] && PHANDLE="$PHANDLE_PRESENTED"
   [ -z "$PHANDLE" ] && [ "$PANON" != "true" ] && PHANDLE="$PHANDLE_RAW"
 
   # Body: anon uses swapped if available; non-anon uses raw.
