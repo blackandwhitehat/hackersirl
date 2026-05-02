@@ -22,9 +22,32 @@ document.getElementById('logout-btn').addEventListener('click', () => {
   location.href = '/cdn-cgi/access/logout?redirect_url=/admin/';
 });
 
-fetch('/cdn-cgi/access/get-identity').then(r => r.ok ? r.json() : null)
-  .then(d => { if (d && d.email) WHO.textContent = d.email; })
-  .catch(() => {});
+// Gate-render: hit /api/admin/whoami first. Everything else (queue,
+// show-assets, identity badge) only runs after we know the API
+// considers the caller admin. Until that resolves, the body sits at
+// data-auth="unknown" which keeps both the queue and the sign-in
+// card hidden — no flash of either state.
+async function probeAuth() {
+  try {
+    const r = await fetch('/api/admin/whoami', { credentials: 'include', cache: 'no-store' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && j.admin ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+probeAuth().then(me => {
+  if (!me) {
+    document.body.dataset.auth = 'anon';
+    return;
+  }
+  document.body.dataset.auth = 'admin';
+  if (me.email) WHO.textContent = me.email;
+  loadShowAssets();
+  load();
+});
 
 const ASSET_LABELS = {
   intro:       { label: 'Intro voice',         tts: true,  upload: true,  hint: 'Manifesto-y opener. 20-30s ideal.' },
@@ -100,8 +123,6 @@ function onUploadAsset(ev) {
   });
   input.click();
 }
-
-loadShowAssets();
 
 const LIST = document.getElementById('list');
 const FILTERS = document.querySelectorAll('.filter-btn');
@@ -261,4 +282,3 @@ FILTERS.forEach(b => b.addEventListener('click', () => {
   currentStatus = b.dataset.status;
   load();
 }));
-load();

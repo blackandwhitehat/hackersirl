@@ -53,9 +53,30 @@
   .transcript{margin-top:0.85rem;padding:0.85rem;background:var(--bg);border:1px solid var(--border);font-size:0.8rem;line-height:1.6;color:var(--text2);max-height:200px;overflow-y:auto;border-radius:4px}
   .transcript.empty-tr{color:var(--dim);font-style:italic}
   details summary{cursor:pointer;font-family:var(--mono);font-size:0.65rem;letter-spacing:1px;color:var(--dim);text-transform:uppercase;padding:0.4rem 0}
+  /* Hide chrome until /api/admin/whoami confirms admin status. The
+     CF Access app already gates the page itself, but a stale or
+     unprivileged session would otherwise flash the queue UI before
+     the API 403s come back. */
+  body[data-auth="unknown"] header,
+  body[data-auth="unknown"] main,
+  body[data-auth="anon"]    header,
+  body[data-auth="anon"]    main { display:none }
+  body[data-auth="anon"]    #gate { display:flex }
+  #gate{display:none;min-height:80vh;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:2rem}
+  #gate .crumb{margin-bottom:0.6rem}
+  #gate h1{font-size:1.2rem;margin-bottom:1rem}
+  #gate p{color:var(--text2);margin-bottom:1.5rem;max-width:32rem;line-height:1.55}
+  #gate a.btn{border-color:var(--green);color:var(--green);text-decoration:none;padding:0.7rem 1.4rem}
+  #gate a.btn:hover{background:var(--green);color:var(--bg)}
 </style>
 </head>
-<body>
+<body data-auth="unknown">
+<section id="gate">
+  <div class="crumb">HACKERS IRL · ADMIN</div>
+  <h1>Restricted area</h1>
+  <p>Sign in with the authorized Cloudflare Access identity to continue. If you reached this page in error, there's nothing here for you.</p>
+  <a class="btn" href="/cdn-cgi/access/login/admin/?redirect_url=/admin/">Sign in</a>
+</section>
 <header>
   <div>
     <div class="crumb">HACKERS IRL · ADMIN</div>
