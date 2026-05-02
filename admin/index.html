@@ -75,11 +75,20 @@
 </main>
 <script>
   const WHO = document.getElementById('who');
-  // CF Access sets this header server-side; fetch it from a known
-  // authed endpoint to display.
+  // Auth: prefer Cloudflare Access (sets identity server-side); fall
+  // back to a bearer token stored in localStorage for testing while
+  // CF Access isn't configured. URL ?token=… loads a token once.
+  const urlToken = new URLSearchParams(location.search).get('token');
+  if (urlToken) {
+    localStorage.setItem('hir_admin_bearer', urlToken);
+    history.replaceState(null, '', location.pathname);
+  }
+  const BEARER = localStorage.getItem('hir_admin_bearer') || '';
+  const authHeaders = () => BEARER ? { authorization: `Bearer ${BEARER}` } : {};
+
   fetch('/cdn-cgi/access/get-identity').then(r => r.ok ? r.json() : null)
-    .then(d => { if (d && d.email) WHO.textContent = d.email; })
-    .catch(() => {});
+    .then(d => { if (d && d.email) WHO.textContent = d.email; else if (BEARER) WHO.textContent = 'bearer-auth'; })
+    .catch(() => { if (BEARER) WHO.textContent = 'bearer-auth'; });
 
   const LIST = document.getElementById('list');
   const FILTERS = document.querySelectorAll('.filter-btn');
@@ -98,7 +107,7 @@
   async function load() {
     LIST.innerHTML = '<div class="empty">Loading…</div>';
     try {
-      const r = await fetch('/api/admin/submissions?status=' + encodeURIComponent(currentStatus), { credentials: 'include' });
+      const r = await fetch('/api/admin/submissions?status=' + encodeURIComponent(currentStatus), { credentials: 'include', headers: authHeaders() });
       if (!r.ok) {
         LIST.innerHTML = '<div class="empty">' + (r.status === 403 ? 'Access denied. Make sure your Cloudflare Access session is valid.' : 'Failed to load: ' + r.status) + '</div>';
         return;
@@ -164,7 +173,7 @@
     ev.target.disabled = true; ev.target.textContent = 'Publishing…';
     const r = await fetch('/api/admin/publish', {
       method: 'POST', credentials: 'include',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({
         submission_id: id, title, description,
         episode_number: epNum ? parseInt(epNum, 10) : null,
@@ -180,7 +189,7 @@
     ev.target.disabled = true;
     const r = await fetch('/api/admin/reject', {
       method: 'POST', credentials: 'include',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ submission_id: id, reason: reason || null }),
     });
     if (r.ok) { load(); } else { alert('Reject failed: ' + r.status); ev.target.disabled = false; }
