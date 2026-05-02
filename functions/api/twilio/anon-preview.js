@@ -12,9 +12,9 @@ import { sbUpdate } from '../../_lib/supabase.js';
 // And the actual ElevenLabs voice IDs are looked up from env-mapped
 // secrets so we can swap voices without redeploying.
 const VOICES = [
-  { id: 'operator',  label: 'the operator',   sampleKey: 'voice-samples/operator.mp3' },
-  { id: 'trucker',   label: 'the trucker',    sampleKey: 'voice-samples/trucker.mp3' },
-  { id: 'anchor',    label: 'the news anchor', sampleKey: 'voice-samples/anchor.mp3' },
+  { id: 'operator', label: 'the source',    sampleKey: 'voice-samples/operator.mp3' },
+  { id: 'trucker',  label: 'the shadow',    sampleKey: 'voice-samples/trucker.mp3' },
+  { id: 'anchor',   label: 'the informant', sampleKey: 'voice-samples/anchor.mp3' },
 ];
 
 function sampleUrl(env, key) {
