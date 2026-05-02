@@ -8,7 +8,7 @@
 
 import { twimlResponse, twilioForm, verifyTwilioSignature } from '../../_lib/twiml.js';
 import { sbSelect, sbUpdate, sbStorageUpload } from '../../_lib/supabase.js';
-import { resolveVoice, swapVoice } from '../../_lib/elevenlabs.js';
+import { resolveVoice, transcribe, ttsText } from '../../_lib/elevenlabs.js';
 
 export async function onRequestPost({ request, env, waitUntil }) {
   const params = await twilioForm(request);
@@ -46,29 +46,44 @@ export async function onRequestPost({ request, env, waitUntil }) {
   return twimlResponse(xml);
 }
 
+// Live TTS-of-transcript path — true voice replacement, zero source
+// caller traces. Pipeline:
+//   Twilio recording → ElevenLabs Scribe → ElevenLabs TTS in target
+//   voice → upload as body_audio_anon_url → poll loop plays it
 async function processAnon(env, submissionId, twilioMp3Url, voiceId) {
   try {
     const elVoiceId = resolveVoice(env, voiceId || 'operator');
     if (!elVoiceId) return;
 
-    // Pull the Twilio recording (basic auth required; Twilio's
-    // recording endpoints are protected).
     const twilioAuth = 'Basic ' + btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
     const audio = await fetch(twilioMp3Url, { headers: { authorization: twilioAuth } });
     if (!audio.ok) return;
-    const audioBuf = await audio.arrayBuffer();
+    const audioBuf = new Uint8Array(await audio.arrayBuffer());
 
-    const swapped = await swapVoice(env, audioBuf, elVoiceId);
+    // 1. Transcribe via Scribe.
+    const transcript = await transcribe(env, audioBuf);
+    if (!transcript || transcript.length < 3) {
+      console.error('anon transcribe returned empty for', submissionId);
+      return;
+    }
+
+    // 2. TTS the transcript in the chosen target voice.
+    const ttsAudio = await ttsText(env, elVoiceId, transcript);
+
+    // 3. Upload as the canonical anon audio + persist transcript so
+    //    the show-notes pipeline doesn't have to re-transcribe.
     const url = await sbStorageUpload(
       env,
       'hackersirl-audio',
       `anon/${submissionId}.mp3`,
-      swapped,
+      ttsAudio,
       'audio/mpeg'
     );
-    await sbUpdate(env, 'hir_submissions', { id: submissionId }, { body_audio_anon_url: url });
+    await sbUpdate(env, 'hir_submissions', { id: submissionId }, {
+      body_audio_anon_url: url,
+      transcript,
+    });
   } catch (e) {
-    // Swallow — caller will get a graceful "still processing" path.
     console.error('anon process failed:', e);
   }
 }

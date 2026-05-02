@@ -39,6 +39,70 @@ export function resolveVoice(env, voiceKey) {
 //
 // Net effect: the source's words/timing carry over; the source's
 // voice does not.
+// Speech-to-text via ElevenLabs Scribe. Returns the spoken text from
+// the audio buffer. Used for live anon-mode transcription so we can
+// then TTS it back in the target voice (true voice replacement).
+export async function transcribe(env, audioBuffer) {
+  if (!env.ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured');
+  const fd = new FormData();
+  fd.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'in.mp3');
+  fd.append('model_id', 'scribe_v1');
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
+    body: fd,
+  });
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error(`ElevenLabs scribe ${r.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await r.json();
+  return (data.text || '').trim();
+}
+
+// TTS — render text in a specific voice, return MP3 bytes.
+export async function ttsText(env, voiceId, text, opts = {}) {
+  if (!env.ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured');
+  if (!voiceId) throw new Error('voiceId required');
+  if (!text) throw new Error('text required');
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      text: text.slice(0, 5000),
+      model_id: opts.modelId || 'eleven_turbo_v2_5',
+      voice_settings: opts.voiceSettings || {
+        stability: 0.55, similarity_boost: 0.85, style: 0.20, use_speaker_boost: true,
+      },
+    }),
+  });
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error(`ElevenLabs tts ${r.status}: ${errText.slice(0, 200)}`);
+  }
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+// Voice Isolator — strips background noise, leaves clean voice.
+// Returns isolated MP3 bytes. Min input length ~4.6s; for shorter
+// clips, callers should fall back to the original audio.
+export async function isolateVoice(env, audioBuffer) {
+  if (!env.ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured');
+  const fd = new FormData();
+  fd.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'in.mp3');
+  const r = await fetch('https://api.elevenlabs.io/v1/audio-isolation', {
+    method: 'POST',
+    headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
+    body: fd,
+  });
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error(`ElevenLabs isolate ${r.status}: ${errText.slice(0, 200)}`);
+  }
+  return new Uint8Array(await r.arrayBuffer());
+}
+
 export async function swapVoice(env, audioBuffer, voiceId, opts = {}) {
   if (!env.ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured');
   if (!voiceId) throw new Error('voiceId required');

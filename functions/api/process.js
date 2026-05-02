@@ -12,7 +12,7 @@
 // Protected by INTERNAL_SECRET so external callers can't trigger it.
 
 import { sbSelect, sbUpdate, sbStorageUpload } from '../_lib/supabase.js';
-import { swapVoice, resolveVoice } from '../_lib/elevenlabs.js';
+import { resolveVoice, transcribe, ttsText, isolateVoice } from '../_lib/elevenlabs.js';
 
 export async function onRequestPost({ request, env }) {
   if ((request.headers.get('x-internal-secret') || '') !== (env.INTERNAL_SECRET || '__missing__')) {
@@ -44,17 +44,35 @@ export async function onRequestPost({ request, env }) {
   let bodyBuf = null;
   if (sub.body_audio_url && sub.body_audio_url.includes('twilio.com')) {
     bodyBuf = await fetchTwilio(sub.body_audio_url);
-    updates.body_audio_url = await sbStorageUpload(env, 'hackersirl-audio', `body/${sub.id}.mp3`, bodyBuf, 'audio/mpeg');
+    // Voice Isolator pass — strip background noise (line hum, room
+    // tone, traffic, etc) before storing. EL minimum is ~4.6s; if
+    // body is too short or isolator fails, fall back to original.
+    let cleanedBody = bodyBuf;
+    if (env.ELEVENLABS_API_KEY && bodyBuf.byteLength > 50_000) {
+      try {
+        cleanedBody = await isolateVoice(env, bodyBuf);
+      } catch (e) {
+        console.error('voice isolator failed (using raw):', e?.message || e);
+      }
+    }
+    updates.body_audio_url = await sbStorageUpload(env, 'hackersirl-audio', `body/${sub.id}.mp3`, cleanedBody, 'audio/mpeg');
+    bodyBuf = cleanedBody;
   }
 
-  // Anon swap if needed and not already done in-call.
+  // Anon path: TTS-of-transcript via Scribe + EL TTS. True voice
+  // replacement, no source-caller traces. Skip if already done
+  // in-call by /api/twilio/anon-process.
   if (sub.anon && !sub.body_audio_anon_url && bodyBuf && env.ELEVENLABS_API_KEY) {
     try {
       const voiceId = resolveVoice(env, sub.anon_voice_id || 'operator');
-      const swapped = await swapVoice(env, bodyBuf, voiceId);
-      updates.body_audio_anon_url = await sbStorageUpload(env, 'hackersirl-audio', `anon/${sub.id}.mp3`, swapped, 'audio/mpeg');
+      const transcript = await transcribe(env, bodyBuf);
+      if (transcript && transcript.length >= 3) {
+        const ttsAudio = await ttsText(env, voiceId, transcript);
+        updates.body_audio_anon_url = await sbStorageUpload(env, 'hackersirl-audio', `anon/${sub.id}.mp3`, ttsAudio, 'audio/mpeg');
+        if (!sub.transcript) updates.transcript = transcript;
+      }
     } catch (e) {
-      console.error('anon swap failed:', e);
+      console.error('anon TTS failed:', e);
     }
   }
 
