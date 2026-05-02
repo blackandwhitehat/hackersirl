@@ -92,7 +92,7 @@
 
   const LIST = document.getElementById('list');
   const FILTERS = document.querySelectorAll('.filter-btn');
-  let currentStatus = 'ready,processing,recording';
+  let currentStatus = 'ready,processing,recording,publishing,published';
 
   function fmtDate(iso) {
     const d = new Date(iso);
@@ -117,6 +117,7 @@
       LIST.innerHTML = rows.map(renderSubmission).join('');
       LIST.querySelectorAll('.btn-publish').forEach(b => b.addEventListener('click', onPublish));
       LIST.querySelectorAll('.btn-reject').forEach(b => b.addEventListener('click', onReject));
+      LIST.querySelectorAll('.btn-update').forEach(b => b.addEventListener('click', onUpdate));
     } catch (e) {
       LIST.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
     }
@@ -125,9 +126,12 @@
   function renderSubmission(s) {
     const isAnon = !!s.anon;
     const bodyAudio = isAnon && s.body_audio_anon_url ? s.body_audio_anon_url : s.body_audio_url;
+    const ep = (s.hir_episodes && s.hir_episodes[0]) || null;
     const isPublishable = s.status === 'ready';
+    const isPublished   = s.status === 'published' && ep;
+    const isPublishing  = s.status === 'publishing';
     return `
-      <div class="sub" data-id="${esc(s.id)}">
+      <div class="sub" data-id="${esc(s.id)}" ${ep ? `data-episode-id="${esc(ep.id)}"` : ''}>
         <div class="sub-head">
           <div>
             <span class="pill pill-status pill-${esc(s.status)}">${esc(s.status)}</span>
@@ -144,6 +148,12 @@
           <summary>Transcript</summary>
           <div class="transcript ${s.transcript ? '' : 'empty-tr'}">${esc(s.transcript || 'No transcript yet.')}</div>
         </details>
+        ${s.preview_audio_url ? `
+        <div class="audio-row" style="border:1px dashed #00ff88;padding:0.6rem;border-radius:6px;margin-top:0.6rem">
+          <label>📦 Final-mix preview (intro + handle + body + outro · ~${fmtDur(s.preview_duration_seconds)})</label>
+          <audio controls preload="none" src="${esc(s.preview_audio_url)}"></audio>
+          <div style="margin-top:0.3rem"><a href="${esc(s.preview_audio_url)}" download style="color:#00ff88">⬇ download mp3</a></div>
+        </div>` : (s.body_audio_url && s.status !== 'recording' ? '<div class="sub-meta">📦 Final-mix preview rendering... refresh in ~2 min</div>' : '')}
         ${isPublishable ? `
         <div class="draft">
           <label>Episode title</label>
@@ -157,10 +167,46 @@
             <button class="btn btn-reject">✕ Reject</button>
           </div>
         </div>
-        ` : `
-        <div class="actions"><button class="btn btn-reject">✕ Reject</button></div>
-        `}
+        ` : ''}
+        ${isPublishing ? `<div class="sub-meta">⏳ Publishing... cron picks up within 2 min</div>` : ''}
+        ${isPublished ? `
+        <div class="draft" style="border-top:1px solid #00ff88;margin-top:0.6rem;padding-top:0.6rem">
+          <div style="font-weight:bold;color:#00ff88;margin-bottom:0.3rem">Published episode (editable)</div>
+          ${ep.audio_url ? `<div class="audio-row"><label>Final episode</label><audio controls preload="none" src="${esc(ep.audio_url)}"></audio><div><a href="${esc(ep.audio_url)}" download style="color:#00ff88">⬇ download mp3</a></div></div>` : ''}
+          <label>Title</label>
+          <input type="text" class="ep-title" value="${esc(ep.title || '')}">
+          <label>Description</label>
+          <textarea class="ep-desc">${esc(ep.description || '')}</textarea>
+          <label>Episode number</label>
+          <input type="number" class="ep-num" value="${esc(ep.episode_number ?? '')}">
+          <div class="actions">
+            <button class="btn btn-update">💾 Save changes</button>
+            <button class="btn btn-reject">✕ Unpublish / reject</button>
+          </div>
+        </div>` : ''}
+        ${(!isPublishable && !isPublished && !isPublishing) ? `<div class="actions"><button class="btn btn-reject">✕ Reject</button></div>` : ''}
       </div>`;
+  }
+
+  async function onUpdate(ev) {
+    const card = ev.target.closest('.sub');
+    const episode_id = card.dataset.episodeId;
+    if (!episode_id) { alert('No episode id on this card.'); return; }
+    const title = card.querySelector('.ep-title').value.trim();
+    const description = card.querySelector('.ep-desc').value.trim();
+    const epNumRaw = card.querySelector('.ep-num').value.trim();
+    if (!title || !description) { alert('Title and description required.'); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Saving…';
+    const r = await fetch('/api/admin/update-episode', {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        episode_id, title, description,
+        episode_number: epNumRaw ? parseInt(epNumRaw, 10) : null,
+      }),
+    });
+    if (r.ok) { ev.target.textContent = '✓ saved'; setTimeout(() => load(), 600); }
+    else { alert('Save failed: ' + r.status); ev.target.disabled = false; ev.target.textContent = '💾 Save changes'; }
   }
 
   async function onPublish(ev) {
