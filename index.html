@@ -410,16 +410,6 @@
     </details>
   </section>
 
-  <div class="apple-embed">
-    <iframe allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write"
-            frameborder="0"
-            height="450"
-            style="width:100%;overflow:hidden;border-radius:10px;background:transparent"
-            sandbox="allow-forms allow-popups allow-same-origin allow-scripts allow-storage-access-by-user-activation allow-top-navigation-by-user-activation"
-            src="https://embed.podcasts.apple.com/us/podcast/hackers-irl/id1780233906?theme=dark">
-    </iframe>
-  </div>
-
   <section class="episodes" id="episodes">
     <div class="section-label">Latest Episodes</div>
     <div id="episode-list">
@@ -432,62 +422,66 @@
   </footer>
 
   <script>
-    // Fetch episodes from Apple's RSS via a CORS proxy, or fall back to static
-    const APPLE_ID = '1780233906';
-    const CORS_PROXIES = [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://itunes.apple.com/lookup?id=${APPLE_ID}&entity=podcastEpisode&limit=20&country=us`)}`,
-      `https://corsproxy.io/?${encodeURIComponent(`https://itunes.apple.com/lookup?id=${APPLE_ID}&entity=podcastEpisode&limit=20&country=us`)}`
-    ];
+    // Read episodes from our own /feed.xml — same source of truth Apple
+    // and Spotify see. Same-origin so no CORS proxy is needed and we
+    // don't depend on third-party services to display our show.
+    function esc(s) { return String(s ?? '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    function parseDuration(s) {
+      // Accepts "M:SS" or "H:MM:SS"
+      if (!s) return 0;
+      const parts = s.split(':').map(n => parseInt(n, 10) || 0);
+      if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+      if (parts.length === 2) return parts[0]*60 + parts[1];
+      return parseInt(s, 10) || 0;
+    }
 
     async function fetchEpisodes() {
       const el = document.getElementById('episode-list');
-
-      for (const url of CORS_PROXIES) {
-        try {
-          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-          if (!res.ok) continue;
-          const data = await res.json();
-
-          if (data.resultCount > 1) {
-            const podcast = data.results[0];
-            const episodes = data.results.slice(1);
-
-            el.innerHTML = episodes.map(ep => {
-              const date = new Date(ep.releaseDate).toLocaleDateString('en-US', {
-                year: 'numeric', month: 'short', day: 'numeric'
-              });
-              const mins = Math.round((ep.trackTimeMillis || 0) / 60000);
-              return `
-                <a class="episode" href="${ep.trackViewUrl || ep.collectionViewUrl}" target="_blank" rel="noopener">
-                  <div class="ep-date">${date}</div>
-                  <div class="ep-title">${ep.trackName}</div>
-                  <div class="ep-desc">${ep.description ? ep.description.slice(0, 200) : ''}</div>
-                  <div class="ep-meta">
-                    ${mins ? `<span>${mins} min</span>` : ''}
-                    <span>${ep.episodeContentType === 'trailer' ? 'TRAILER' : 'EPISODE'}</span>
-                  </div>
-                </a>
-              `;
-            }).join('');
-            return;
-          }
-        } catch (e) {
-          console.log('Proxy failed:', e);
+      try {
+        const res = await fetch('/feed.xml', { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) throw new Error(`feed ${res.status}`);
+        const xml = await res.text();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const items = [...doc.querySelectorAll('item')];
+        if (!items.length) {
+          el.innerHTML = '<div class="loading" style="animation:none">No episodes yet. Call <strong>1-904-915-HACK</strong> or hit <a href="/call" style="color:var(--green)">/call</a> to leave the first.</div>';
+          return;
         }
+        el.innerHTML = items.map(it => {
+          const title = it.querySelector('title')?.textContent || '';
+          const desc  = it.querySelector('description')?.textContent || '';
+          const enc   = it.querySelector('enclosure');
+          const audio = enc?.getAttribute('url') || '';
+          const pub   = it.querySelector('pubDate')?.textContent;
+          const dur   = parseDuration(it.getElementsByTagNameNS('http://www.itunes.com/dtds/podcast-1.0.dtd', 'duration')[0]?.textContent);
+          const date  = pub ? new Date(pub).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+          const mins  = dur ? Math.max(1, Math.round(dur/60)) : 0;
+          const epNum = it.getElementsByTagNameNS('http://www.itunes.com/dtds/podcast-1.0.dtd', 'episode')[0]?.textContent;
+          return `
+            <article class="episode">
+              <div class="ep-date">${esc(date)}${epNum ? ` &middot; #${esc(epNum)}` : ''}</div>
+              <div class="ep-title">${esc(title)}</div>
+              <div class="ep-desc">${esc(desc.slice(0, 240))}</div>
+              <div class="ep-meta">
+                ${mins ? `<span>${mins} min</span>` : ''}
+                <span>EPISODE</span>
+              </div>
+              ${audio ? `<audio controls preload="none" src="${esc(audio)}" style="width:100%;margin-top:0.75rem"></audio>` : ''}
+            </article>
+          `;
+        }).join('');
+      } catch (e) {
+        console.error('feed fetch failed:', e);
+        el.innerHTML = `
+          <div class="loading" style="animation:none">
+            Couldn't load episodes from the feed.<br>
+            <a href="/feed.xml" style="color:var(--green);margin-top:0.5rem;display:inline-block">Open the raw RSS →</a>
+            &nbsp;&middot;&nbsp;
+            <a href="https://podcasts.apple.com/us/podcast/hackers-irl/id1780233906" style="color:var(--green);">Apple Podcasts</a>
+          </div>`;
       }
-
-      // Fallback: show the embedded player only
-      el.innerHTML = `
-        <div class="loading" style="animation:none">
-          Episodes load from the Apple Podcasts player above.<br>
-          <a href="https://podcasts.apple.com/us/podcast/hackers-irl/id1780233906"
-             style="color:var(--green);text-decoration:none;margin-top:0.5rem;display:inline-block">
-            Open in Apple Podcasts →
-          </a>
-        </div>
-      `;
     }
-
     fetchEpisodes();
   </script>
 </body>
