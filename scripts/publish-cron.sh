@@ -102,23 +102,26 @@ render_episode() {
     "$body_mp3" > "$WORKDIR/$id.body.log" 2>&1 || {
       echo "    body normalize failed"; tail -3 "$WORKDIR/$id.body.log"; return 1; }
 
-  # Step 1: pre-mix intro voice + bg_intro (bg ducked under voice via
-  # sidechaincompress when both available, else simple amix).
+  # Step 1: pre-mix intro voice + bg_intro. amix without normalize=0
+  # divides each input by N so bg ends up another -6dB quieter than
+  # the bg volume= setting suggests. We pin normalize=0 and bump bg
+  # to 0.35 (≈ -9dB under voice peak) so the music is clearly present
+  # under the voiceover instead of perceptually buried.
   local intro_mixed="$WORKDIR/${id}-intro-mixed.mp3"
   if [ -n "$BG_INTRO_LOCAL" ] && [ -s "$BG_INTRO_LOCAL" ]; then
     ffmpeg -y -i "$INTRO_LOCAL" -i "$BG_INTRO_LOCAL" \
-      -filter_complex "[1:a]volume=0.20,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0,afade=in:st=0:d=0.5[out]" \
+      -filter_complex "[1:a]volume=0.35,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,afade=in:st=0:d=0.5[out]" \
       -map "[out]" -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k "$intro_mixed" > "$WORKDIR/$id.intromix.log" 2>&1 || {
         echo "    intro mix failed"; tail -5 "$WORKDIR/$id.intromix.log"; intro_mixed="$INTRO_LOCAL"; }
   else
     intro_mixed="$INTRO_LOCAL"
   fi
 
-  # Step 2: pre-mix outro voice + bg_outro
+  # Step 2: pre-mix outro voice + bg_outro (same balance + tail fade).
   local outro_mixed="$WORKDIR/${id}-outro-mixed.mp3"
   if [ -n "$BG_OUTRO_LOCAL" ] && [ -s "$BG_OUTRO_LOCAL" ]; then
     ffmpeg -y -i "$OUTRO_LOCAL" -i "$BG_OUTRO_LOCAL" \
-      -filter_complex "[1:a]volume=0.20,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0,afade=out:st=0:d=2[out]" \
+      -filter_complex "[1:a]volume=0.35,apad[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,afade=out:st=0:d=2[out]" \
       -map "[out]" -ac 1 -ar 44100 -c:a libmp3lame -b:a 128k "$outro_mixed" > "$WORKDIR/$id.outromix.log" 2>&1 || {
         echo "    outro mix failed"; tail -5 "$WORKDIR/$id.outromix.log"; outro_mixed="$OUTRO_LOCAL"; }
   else
