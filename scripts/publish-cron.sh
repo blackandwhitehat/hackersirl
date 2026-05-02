@@ -111,7 +111,10 @@ done
 # Same hash check for ready-state submission previews. Preview render
 # only triggers when preview_audio_url IS NULL, so we null it on stale
 # rows to force a re-render. preview_input_hash stored separately.
-PREVIEW_LIVE=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=not.is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon,preview_input_hash" \
+# Anon submissions have body_audio_url=null (anonymity guard scrubs the
+# raw caller voice) but still have body_audio_anon_url, so we accept
+# either source.
+PREVIEW_LIVE=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=not.is.null&or=(body_audio_url.not.is.null,body_audio_anon_url.not.is.null)&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon,preview_input_hash" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
 jq -c '.[]' <<<"$PREVIEW_LIVE" 2>/dev/null | while read -r prow; do
   PID=$(jq -r .id <<<"$prow")
@@ -141,7 +144,7 @@ COUNT=$(jq 'length' <<<"$ROWS" 2>/dev/null) || COUNT=0
 
 # Also pull submissions that don't have a preview rendered yet so admin
 # can hear the final mix before clicking Publish.
-PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&body_audio_url=not.is.null&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
+PREVIEWS=$(curl -s "${SUPABASE_URL}/rest/v1/hir_submissions?status=eq.ready&preview_audio_url=is.null&or=(body_audio_url.not.is.null,body_audio_anon_url.not.is.null)&select=id,handle,handle_audio_url,handle_presented_url,handle_intro_url,body_audio_url,body_audio_anon_url,anon&order=created_at.asc&limit=5" \
   -H "apikey: $SUPABASE_KEY" -H "authorization: Bearer $SUPABASE_KEY")
 PCOUNT=$(jq 'length' <<<"$PREVIEWS" 2>/dev/null) || PCOUNT=0
 
