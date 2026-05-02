@@ -11,7 +11,15 @@ export async function onRequestPost({ request, env, waitUntil }) {
   if (!(await verifyTwilioSignature(request, env, params))) {
     return new Response('signature invalid', { status: 403 });
   }
-  await sbUpdate(env, 'hir_submissions', { twilio_call_sid: params.CallSid }, { status: 'processing' });
+  // Only flip from in-progress states to 'processing'. A replay of
+  // this webhook after publish would otherwise re-open a closed row.
+  const updated = await sbUpdate(env, 'hir_submissions', {
+    twilio_call_sid: params.CallSid,
+    status: 'in.(recording,menu)',
+  }, { status: 'processing' });
+  if (!updated.length) {
+    return twimlResponse('<Say voice="Polly.Joanna">This call session is no longer accepting submissions. Goodbye.</Say><Hangup/>');
+  }
 
   // Fire-and-forget the post-processing pipeline. We hit our own
   // /api/process endpoint with the call sid; that handler runs the

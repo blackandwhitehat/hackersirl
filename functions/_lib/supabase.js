@@ -23,9 +23,24 @@ export async function sbInsert(env, table, row, opts = {}) {
   return opts.returning === false ? null : (await r.json())[0];
 }
 
+// Match values default to `eq.<v>` for ergonomics. If a value already
+// starts with a PostgREST operator prefix (eq./neq./in./not./gt./
+// lt./gte./lte./like./ilike./is.), it's passed through verbatim.
+// Lets callers gate writes on a status condition, e.g.:
+//   sbUpdate(env, 'hir_submissions',
+//     { id, status: 'not.in.(published,rejected)' },
+//     { ... });
+//
+// Returns the array of rows that matched + were updated. Empty array
+// = the guard rejected the write (caller can detect replay/race).
+const PGRST_OP_PREFIX = /^(eq|neq|in|not|gt|lt|gte|lte|like|ilike|is|fts)\./;
+
 export async function sbUpdate(env, table, match, patch) {
   const params = new URLSearchParams();
-  for (const [k, v] of Object.entries(match)) params.set(k, `eq.${v}`);
+  for (const [k, v] of Object.entries(match)) {
+    const sv = String(v);
+    params.set(k, PGRST_OP_PREFIX.test(sv) ? sv : `eq.${sv}`);
+  }
   const url = `${env.SUPABASE_URL}/rest/v1/${table}?${params}`;
   const r = await fetch(url, {
     method: 'PATCH',
@@ -33,7 +48,7 @@ export async function sbUpdate(env, table, match, patch) {
     body: JSON.stringify(patch),
   });
   if (!r.ok) throw new Error(`sbUpdate ${table}: ${r.status} ${await r.text()}`);
-  return (await r.json())[0];
+  return await r.json();
 }
 
 export async function sbSelect(env, table, params = {}) {
@@ -59,6 +74,25 @@ export async function sbStorageUpload(env, bucket, key, body, contentType) {
   });
   if (!r.ok) throw new Error(`sbStorageUpload: ${r.status} ${await r.text()}`);
   return `${env.SUPABASE_URL}/storage/v1/object/public/${bucket}/${key}`;
+}
+
+// Delete an object from a Storage bucket. Used to actively scrub
+// raw caller audio after an anon swap completes so the unscrambled
+// voice doesn't sit in the public bucket forever.
+export async function sbStorageDelete(env, bucket, key) {
+  const url = `${env.SUPABASE_URL}/storage/v1/object/${bucket}/${key}`;
+  const r = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      apikey: env.SUPABASE_SERVICE_KEY,
+      authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+    },
+  });
+  // 200 ok, 404 already gone — both are fine. Anything else is real.
+  if (!r.ok && r.status !== 404) {
+    throw new Error(`sbStorageDelete: ${r.status} ${await r.text()}`);
+  }
+  return true;
 }
 
 export async function sbStorageFetch(env, bucket, key) {

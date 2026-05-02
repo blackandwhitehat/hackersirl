@@ -1,0 +1,33 @@
+# Cloudflare Pages serves static routes with these headers attached.
+# Function responses set their own headers; this file only governs
+# /index.html, /call.html, /admin/, etc.
+
+/*
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: microphone=(self), camera=(), geolocation=(), payment=(), usb=()
+
+# Default CSP for the public site (homepage + /feed.xml etc).
+# Locks scripts to self + Turnstile + Cloudflare Insights.
+/
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; media-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co blob:; connect-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'
+
+# /call needs media-src for the IVR mp3s + microphone Permissions-Policy.
+/call
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; media-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co blob:; connect-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+
+/call.html
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; media-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co blob:; connect-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+
+# /admin loads only same-origin code + the optional CF Access identity
+# probe. NO third-party script execution here — admin XSS would mean
+# bearer exfil via localStorage.
+/admin/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co; connect-src 'self' https://ltaaiiqtrmlqrzhglxob.supabase.co https://hackersirl.cloudflareaccess.com https://bamboosec.cloudflareaccess.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+  X-Robots-Tag: noindex, nofollow
+
+# RSS endpoint — no scripts at all.
+/feed.xml
+  Cache-Control: public, max-age=300

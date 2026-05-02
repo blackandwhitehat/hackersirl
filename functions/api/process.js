@@ -11,7 +11,7 @@
 //
 // Protected by INTERNAL_SECRET so external callers can't trigger it.
 
-import { sbSelect, sbUpdate, sbStorageUpload } from '../_lib/supabase.js';
+import { sbSelect, sbUpdate, sbStorageUpload, sbStorageDelete } from '../_lib/supabase.js';
 import { resolveVoice, transcribe, ttsText, isolateVoice } from '../_lib/elevenlabs.js';
 import { timingSafeEqual } from '../_lib/auth.js';
 
@@ -71,6 +71,7 @@ export async function onRequestPost({ request, env }) {
   // Anon path: TTS-of-transcript via Scribe + EL TTS. True voice
   // replacement, no source-caller traces. Skip if already done
   // in-call by /api/twilio/anon-process.
+  let anonRendered = false;
   if (sub.anon && !sub.body_audio_anon_url && bodyBuf && env.ELEVENLABS_API_KEY) {
     try {
       const voiceId = resolveVoice(env, sub.anon_voice_id || 'operator');
@@ -79,9 +80,29 @@ export async function onRequestPost({ request, env }) {
         const ttsAudio = await ttsText(env, voiceId, transcript);
         updates.body_audio_anon_url = await sbStorageUpload(env, 'hackersirl-audio', `anon/${sub.id}.mp3`, ttsAudio, 'audio/mpeg');
         if (!sub.transcript) updates.transcript = transcript;
+        anonRendered = true;
       }
     } catch (e) {
       console.error('anon TTS failed:', e);
+    }
+  }
+
+  // Anonymity guard: once the anon TTS exists, scrub the raw
+  // caller voice from the public bucket and null the URL on the
+  // row so the admin queue doesn't link to it. The published
+  // episode uses the anon URL; we never need the raw again.
+  // Only deletes when:
+  //   - submission is anon, AND
+  //   - the anon URL exists (just rendered or was rendered earlier
+  //     by /api/twilio/anon-process), AND
+  //   - we know the body Storage path (sub.id-based).
+  const anonUrlNow = updates.body_audio_anon_url || sub.body_audio_anon_url;
+  if (sub.anon && anonUrlNow) {
+    try {
+      await sbStorageDelete(env, 'hackersirl-audio', `body/${sub.id}.mp3`);
+      updates.body_audio_url = null;
+    } catch (e) {
+      console.error('raw body delete failed (anonymity gap):', e?.message || e);
     }
   }
 

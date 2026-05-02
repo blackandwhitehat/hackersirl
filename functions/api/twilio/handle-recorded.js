@@ -12,7 +12,10 @@ export async function onRequestPost({ request, env }) {
     return new Response('signature invalid', { status: 403 });
   }
   const recUrl = params.RecordingUrl;
-  await sbUpdate(env, 'hir_submissions', { twilio_call_sid: params.CallSid }, {
+  await sbUpdate(env, 'hir_submissions', {
+    twilio_call_sid: params.CallSid,
+    status: 'not.in.(published,rejected,publishing,processing)',
+  }, {
     handle_audio_url: recUrl ? `${recUrl}.mp3` : null,
   });
   return twimlResponse(`<Redirect method="POST">/api/twilio/body-prompt</Redirect>`);

@@ -21,7 +21,7 @@ export async function onRequestPost({ request, env }) {
 
   const sub = (await sbSelect(env, 'hir_submissions', {
     id: `eq.${submission_id}`,
-    select: 'id,body_audio_url,body_audio_anon_url,anon,duration_seconds',
+    select: 'id,status,body_audio_url,body_audio_anon_url,anon,duration_seconds',
     limit: '1',
   }))[0];
   if (!sub) return new Response('submission not found', { status: 404 });
@@ -29,6 +29,20 @@ export async function onRequestPost({ request, env }) {
   // Anon flow uses the swapped audio if available; otherwise the raw body.
   const sourceUrl = (sub.anon && sub.body_audio_anon_url) ? sub.body_audio_anon_url : sub.body_audio_url;
   if (!sourceUrl) return new Response('submission has no audio', { status: 400 });
+
+  // Race guard: flip status='ready' → 'publishing' as a conditional
+  // PATCH and use the affected-row count as the gate. Two parallel
+  // publishes can't both succeed: only the first one matches the
+  // 'ready' filter; the second sees status='publishing' and gets
+  // 0 rows back. No double-render.
+  const claim = await sbUpdate(env, 'hir_submissions',
+    { id: submission_id, status: 'ready' },
+    { status: 'publishing' });
+  if (!claim.length) {
+    return new Response(JSON.stringify({ error: 'submission is not in ready state', current: sub.status }), {
+      status: 409, headers: { 'content-type': 'application/json' },
+    });
+  }
 
   const guid = crypto.randomUUID();
   const row = await sbInsert(env, 'hir_episodes', {
@@ -47,9 +61,6 @@ export async function onRequestPost({ request, env }) {
     processing_state: 'pending',
   });
 
-  // Submission moves to 'publishing' so admin queue can show progress;
-  // cron flips to 'published' once the final MP3 lands.
-  await sbUpdate(env, 'hir_submissions', { id: submission_id }, { status: 'publishing' });
   return new Response(JSON.stringify(row), {
     headers: { 'content-type': 'application/json' },
   });

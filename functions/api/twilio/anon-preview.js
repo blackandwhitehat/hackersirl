@@ -45,7 +45,10 @@ export async function onRequestPost({ request, env }) {
   if (digit === '*') {
     const url = new URL(request.url);
     const last = url.searchParams.get('last') || 'operator';
-    await sbUpdate(env, 'hir_submissions', { twilio_call_sid: params.CallSid }, { anon_voice_id: last });
+    await sbUpdate(env, 'hir_submissions', {
+      twilio_call_sid: params.CallSid,
+      status: 'not.in.(published,rejected,publishing,processing)',
+    }, { anon_voice_id: last });
     return twimlResponse(`<Redirect method="POST">/api/twilio/handle-prompt</Redirect>`);
   }
 
@@ -66,7 +69,10 @@ export async function onRequestPost({ request, env }) {
   const url = new URL(request.url);
   const confirmed = url.searchParams.get('confirmed');
   if (confirmed) {
-    await sbUpdate(env, 'hir_submissions', { twilio_call_sid: params.CallSid }, { anon_voice_id: confirmed });
+    await sbUpdate(env, 'hir_submissions', {
+      twilio_call_sid: params.CallSid,
+      status: 'not.in.(published,rejected,publishing,processing)',
+    }, { anon_voice_id: confirmed });
     return twimlResponse(`<Redirect method="POST">/api/twilio/handle-prompt</Redirect>`);
   }
 

@@ -13,7 +13,10 @@ export async function onRequestPost({ request, env }) {
   const choice = params.Digits;
 
   if (choice === '2') {
-    await sbUpdate(env, 'hir_submissions', { twilio_call_sid: params.CallSid }, { anon: true });
+    await sbUpdate(env, 'hir_submissions', {
+      twilio_call_sid: params.CallSid,
+      status: 'not.in.(published,rejected,publishing,processing)',
+    }, { anon: true });
     return twimlResponse(`<Redirect method="POST">/api/twilio/anon-preview</Redirect>`);
   }
 

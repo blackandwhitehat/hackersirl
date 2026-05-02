@@ -8,7 +8,10 @@ export async function onRequestPost({ request, env }) {
   if (!(await verifyTwilioSignature(request, env, params))) {
     return new Response('signature invalid', { status: 403 });
   }
-  await sbUpdate(env, 'hir_submissions', { twilio_call_sid: params.CallSid }, {
+  await sbUpdate(env, 'hir_submissions', {
+    twilio_call_sid: params.CallSid,
+    status: 'not.in.(published,rejected,publishing,processing)',
+  }, {
     body_audio_url: params.RecordingUrl ? `${params.RecordingUrl}.mp3` : null,
     duration_seconds: parseInt(params.RecordingDuration, 10) || null,
   });
