@@ -24,20 +24,33 @@ export function resolveVoice(env, voiceKey) {
 }
 
 // Run input audio through Speech-to-Speech and return swapped audio
-// as a Uint8Array (mp3-encoded by default — eleven_multilingual_sts_v2
-// returns mp3 if you ask for it).
+// as a Uint8Array (mp3-encoded by default).
+//
+// Voice settings tuned for ANONYMITY — we want the output to sound
+// like the target persona, not like the source caller. The previous
+// settings (stability 0.5, similarity_boost 0.85, style 0,
+// use_speaker_boost off) preserved too much of the caller's prosody
+// and timbre, so the output still sounded recognizably like them.
+//
+//   stability         high  → suppresses source's natural variations
+//   similarity_boost  high  → push hard toward target voice
+//   style             >0    → exaggerate target voice's traits
+//   use_speaker_boost true  → enhance the target's vocal print
+//
+// Net effect: the source's words/timing carry over; the source's
+// voice does not.
 export async function swapVoice(env, audioBuffer, voiceId, opts = {}) {
   if (!env.ELEVENLABS_API_KEY) throw new Error('ELEVENLABS_API_KEY not configured');
   if (!voiceId) throw new Error('voiceId required');
   const url = `https://api.elevenlabs.io/v1/speech-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
   const fd = new FormData();
   fd.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'in.mp3');
-  fd.append('model_id', opts.modelId || 'eleven_multilingual_sts_v2');
+  fd.append('model_id', opts.modelId || 'eleven_english_sts_v2');
   fd.append('voice_settings', JSON.stringify({
-    stability: 0.5,
-    similarity_boost: 0.85,
-    style: 0,
-    use_speaker_boost: false,
+    stability: 0.85,
+    similarity_boost: 0.95,
+    style: 0.45,
+    use_speaker_boost: true,
   }));
   fd.append('remove_background_noise', 'true');
   const r = await fetch(url, {
